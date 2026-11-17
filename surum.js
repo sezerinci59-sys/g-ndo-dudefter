@@ -1,5 +1,6 @@
 // Sürüm notları — her güncellemede en üste yeni satır eklenir.
 export const SURUMLER = [
+  { v: '2.7', t: '18.11.2026', n: ['Akıcılık: yumuşak animasyonlar (isim dokunma, sekme ve gün geçişi, Ayarlar açılışı, bildirimler, fotoğraflar).', 'Kaydırmayı yavaşlatan bulanıklık efektleri kaldırıldı; animasyonlar ekran kartında çalışır (120 Hz hedefli).'] },
   { v: '2.6', t: '18.11.2026', n: ['Ayarlar > Excel indir: aylık puantaj, şablonla aynı düzen ve renklerde .xlsx.'] },
   { v: '2.5.1', t: '18.11.2026', n: ['Ayarlar > Ekipler: kişi adı ✏️ ile düzeltilebilir (puantaj kayıtları da yeni adla gider).', 'Ekip düğmeleriyle ve isim aramasıyla liste süzülür.', 'Kişi satırları daha derli toplu.'] },
   { v: '2.5', t: '18.11.2026', n: ['Tek ekip listesi: iki şantiyede aynı kişiler görünür (puantaj yine şantiyeye göre ayrı).', '"İthal" olanlar listenin sonunda.', 'Başlıktaki beyaz parlama kaldırıldı, yazı daha okunaklı.', 'Ayarlar > Ekipler: "Sigorta çıkışı" — kişi silinmez, Arşiv bölümüne gider, "Geri al" ile döner.'] },

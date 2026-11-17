@@ -92,9 +92,32 @@ const state = { site: null, date: today(), day: null, teams: [], members: [], pu
 const ui = { hideTeam: null, delName: null, archName: null, editName: null, filterTeam: null, q: '', closed: new Set() };
 let photoUrls = [];
 
+// ---------- Animasyon yardımcıları (yalnızca transform/opacity; will-change sadece animasyon sırasında) ----------
+const reduceMotion = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : { matches: false };
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+// cls sınıfı animasyon süresince takılı kalır (CSS içinde will-change verir), bitince kalkar.
+function playClass(el, cls, ms) {
+  if (!el || reduceMotion.matches) return;
+  clearTimeout(el._pc);
+  if (el.classList.contains(cls)) { el.classList.remove(cls); void el.offsetWidth; } // yalnızca animasyonu yeniden başlatırken
+  el.classList.add(cls);
+  el._pc = setTimeout(() => el.classList.remove(cls), ms + 60);
+}
+// Mantıksal durum (hidden) hemen değişir; giriş animasyonu görsel kalır. Çıkışta öğe animasyon bitince gizlenir.
+function showAnim(el, cls, ms) {
+  clearTimeout(el._lv); el.classList.remove('leaving'); el.hidden = false; playClass(el, cls, ms);
+}
+function hideAnim(el, ms) {
+  if (el.hidden) return;
+  clearTimeout(el._lv);
+  if (reduceMotion.matches) { el.hidden = true; return; }
+  el.classList.add('leaving');
+  el._lv = setTimeout(() => { el.hidden = true; el.classList.remove('leaving'); }, ms + 20);
+}
 function toast(msg, ms = 2800) {
-  const t = $('toast'); t.textContent = msg; t.hidden = false;
-  clearTimeout(toast._t); toast._t = setTimeout(() => { t.hidden = true; }, ms);
+  const t = $('toast'); t.textContent = msg;
+  if (t.hidden || t.classList.contains('leaving')) showAnim(t, 'in', 200);
+  clearTimeout(toast._t); toast._t = setTimeout(() => hideAnim(t, 160), ms);
 }
 
 // ---------- Gün verisi ----------
@@ -203,9 +226,50 @@ function renderTabs() {
     b.classList.toggle('active', on); b.setAttribute('aria-selected', on);
   });
   $('puanSite').textContent = SITES[state.site] || '';
+  const nav = $('siteTabs');
+  nav.dataset.pos = state.site === 'koseilyas' ? '1' : '0';
+  if (state.site && !nav.classList.contains('ready')) requestAnimationFrame(() => requestAnimationFrame(() => nav.classList.add('ready')));
 }
 const TEAM_COLORS = ['#2f7d2f', '#245edb', '#b45500', '#7a4fb5', '#c0392b', '#0f7a7a', '#8b5a2b'];
 function teamColor(name) { let h = 2166136261; for (const c of String(name)) h = Math.imul(h ^ c.codePointAt(0), 16777619) >>> 0; return TEAM_COLORS[(h >>> 8) % TEAM_COLORS.length]; }
+function setChipState(b, v) {
+  b.classList.toggle('full', v === 1); b.classList.toggle('half', v === 0.5);
+  let s = b.querySelector('small');
+  if (v) { if (!s) { s = document.createElement('small'); b.appendChild(s); } s.textContent = v === 1 ? 'Tam' : 'Yarım'; }
+  else if (s) s.remove();
+}
+function popChip(b, i = 0) {
+  if (reduceMotion.matches) return;
+  b.style.animationDelay = i ? Math.min(i * 20, 300) + 'ms' : '';
+  playClass(b, 'pop', 180 + (i ? Math.min(i * 20, 300) : 0));
+}
+// Sadece metinleri günceller (yeniden kurma yok)
+function updateCounts() {
+  const att = state.day.attendance, label = state.date === today() ? 'bugün' : 'bu gün';
+  for (const sec of $('chips').querySelectorAll('section.team[data-team]')) {
+    const mem = teamMembers(sec.dataset.team);
+    const present = mem.filter((m) => att[m.name] > 0).length;
+    const c = sec.querySelector('.team-count'), txt = `${label} ${present}/${mem.length}`;
+    if (c && c.textContent !== txt) c.textContent = txt;
+  }
+  const vals = Object.values(att).filter((v) => v > 0);
+  const sum = vals.reduce((a, b) => a + b, 0);
+  const l2 = state.date === today() ? 'Bugün' : 'Bu gün', st = `${l2}: ${vals.length} kişi (${fmtNum(sum)} gün)`;
+  if ($('summary').textContent !== st) $('summary').textContent = st;
+}
+// Tek tek chip günceller. Düzenin değişeceği durumda (gizli/listede olmayan grup) false döner: tam yeniden çizim gerekir.
+function patchChips(names, stagger = false) {
+  const att = state.day.attendance, els = [];
+  for (const n of names) {
+    const b = $('chips').querySelector(`.chip[data-name="${CSS.escape(n)}"]`);
+    if (!b) return false;
+    if (b.closest('.hiddengrp,.orphangrp') && !(att[n] > 0)) return false;
+    els.push([b, att[n]]);
+  }
+  els.forEach(([b, v], i) => { setChipState(b, v); popChip(b, stagger ? i : 0); });
+  updateCounts();
+  return true;
+}
 function chipBtn(name, v) {
   const b = document.createElement('button'); b.type = 'button';
   b.className = 'chip' + (v === 1 ? ' full' : v === 0.5 ? ' half' : '');
@@ -271,14 +335,18 @@ function renderNote() {
   const ta = $('note');
   if (document.activeElement !== ta) ta.value = state.day.note || '';
 }
-let armedPhoto = null, armTimer = null;
+let armedPhoto = null, armTimer = null, photoCtx = '', photoSeen = new Set();
 function disarmPhoto() { clearTimeout(armTimer); armedPhoto = null; }
 async function renderPhotos() {
   const list = (await dbIndexAll('photos', 'siteDate', [state.site, state.date])).filter((p) => !p.deleted);
   photoUrls.forEach((u) => URL.revokeObjectURL(u)); photoUrls = [];
   const grid = $('photoGrid'); grid.textContent = '';
+  const ctx = state.site + '|' + state.date, fresh = ctx !== photoCtx;
+  if (fresh) { photoCtx = ctx; photoSeen = new Set(); }
   for (const p of list) {
-    const div = document.createElement('div'); div.className = 'photo ' + (p.status === 'sent' ? 'sent' : 'pending');
+    const isNew = !fresh && !photoSeen.has(p.id) && !reduceMotion.matches; photoSeen.add(p.id);
+    const div = document.createElement('div'); div.className = 'photo ' + (p.status === 'sent' ? 'sent' : 'pending') + (isNew ? ' pin' : '');
+    if (isNew) setTimeout(() => div.classList.remove('pin'), 240);
     const img = document.createElement('img');
     const noThumb = () => { div.classList.add('nothumb'); img.remove(); };
     if (p.thumbData) img.src = p.thumbData;
@@ -308,7 +376,12 @@ async function deletePhoto(id) {
 $('photoGrid').addEventListener('click', async (e) => {
   const b = e.target.closest('[data-pdel]'); if (!b) return;
   const id = Number(b.dataset.pdel);
-  if (armedPhoto === id) { disarmPhoto(); await deletePhoto(id); return; }
+  if (armedPhoto === id) {
+    disarmPhoto();
+    const ph = b.closest('.photo');
+    if (ph && !reduceMotion.matches) { if (ph.classList.contains('pout')) return; ph.classList.add('pout'); await wait(160); }
+    await deletePhoto(id); return;
+  }
   disarmPhoto(); armedPhoto = id;
   armTimer = setTimeout(() => { armedPhoto = null; renderPhotos(); }, 4000);
   renderPhotos();
@@ -335,13 +408,16 @@ async function selectSite(site) {
   state.site = site; ls.set('sd_site', site);
   await renderAll();
   $('picker').hidden = true;
+  playClass(document.querySelector('main'), 'pg-up', 200);
   pullDay(); pullRoster();
 }
 async function setDate(date) {
   if (!date) return;
   await flushNote();
+  const dir = date > state.date ? 'pg-next' : 'pg-prev';
   state.date = date;
   await renderAll();
+  playClass(document.querySelector('main'), dir, 200);
   pullDay();
 }
 
@@ -392,7 +468,7 @@ $('chips').addEventListener('pointerdown', (e) => {
     try { navigator.vibrate?.(15); } catch { /* yoksay */ }
     const att = state.day.attendance;
     att[n] = att[n] === 0.5 ? 1 : 0.5;
-    renderChips(); await persistDay(state.day, { att: true });
+    if (!patchChips([n])) renderChips(); await persistDay(state.day, { att: true });
   }, 450);
 });
 $('chips').addEventListener('pointermove', (e) => {
@@ -407,12 +483,13 @@ $('chips').addEventListener('click', async (e) => {
     if (press.suppress) { press.suppress = false; return; }
     const n = t.dataset.name, v = att[n];
     if (!v) att[n] = 1; else delete att[n];
-    renderChips(); await persistDay(state.day, { att: true });
+    if (!patchChips([n])) renderChips(); await persistDay(state.day, { att: true });
   } else if (t.dataset.all) {
     const mem = state.members.filter((m) => m.teamId === t.dataset.all);
     if (!mem.length || mem.every((m) => att[m.name] === 1)) return;
+    const changed = mem.filter((m) => att[m.name] !== 1).map((m) => m.name);
     for (const m of mem) att[m.name] = 1;
-    renderChips(); await persistDay(state.day, { att: true });
+    if (!patchChips(changed, true)) renderChips(); await persistDay(state.day, { att: true });
   }
 });
 $('chips').addEventListener('submit', async (e) => {
@@ -900,7 +977,7 @@ async function openCamera(kind) {
   cam.stream = stream; cam.site = state.site; cam.date = state.date; cam.saved = 0;
   cam.urls.forEach((u) => URL.revokeObjectURL(u)); cam.urls = [];
   $('camStrip').textContent = ''; $('camCount').textContent = '0 fotoğraf';
-  const v = $('camVideo'); v.srcObject = stream; $('cam').hidden = false;
+  const v = $('camVideo'); v.srcObject = stream; showAnim($('cam'), 'in', 160);
   try { await v.play(); } catch { /* autoplay zaten var */ }
 }
 function camShot() {
@@ -961,7 +1038,8 @@ async function refreshBanner() {
   const showErr = !!lastError && !(onlyUpdate && n === 0);
   bar.classList.toggle('pending', n > 0); bar.classList.toggle('err', showErr);
   $('syncText').innerHTML = n > 0 ? `<b id="pendingCount">${n}</b> öğe gönderilmeyi bekliyor` : `<b id="pendingCount">0</b> öğe bekliyor · hepsi gönderildi`;
-  bar.hidden = !(n > 0 || showErr);
+  if (n > 0 || showErr) { if (bar.hidden || bar.classList.contains('leaving')) showAnim(bar, 'in', 200); }
+  else { clearTimeout(bar._lv); bar.classList.remove('leaving', 'in'); bar.hidden = true; } // gizleme anında (test/mantık); giriş animasyonlu
   const un = $('updateNote'); if (un) un.hidden = !(needUpdate || onlyUpdate);
   $('syncNow').disabled = syncing;
   $('syncNow').textContent = syncing ? 'Gönderiliyor…' : 'Şimdi gönder';
@@ -1218,14 +1296,14 @@ function openSettings() {
   renderLog();
   renderSurum();
   const s = getSettings(); $('setUrl').value = s.url; $('setKey').value = s.key;
-  $('testResult').textContent = ''; ui.hideTeam = null; ui.delName = null; ui.archName = null; ui.editName = null; renderTeamSettings(); renderLocInfo(); $('settings').hidden = false;
+  $('testResult').textContent = ''; ui.hideTeam = null; ui.delName = null; ui.archName = null; ui.editName = null; renderTeamSettings(); renderLocInfo(); showAnim($('settings'), 'sheet-in', 260);
   pullRoster();
 }
 function readSettingsForm() { ls.set('sd_settings', { url: $('setUrl').value.trim(), key: $('setKey').value.trim() }); }
 function autoSaveSettings() { readSettingsForm(); $('testResult').textContent = 'Kaydedildi ✓'; }
 ['setUrl', 'setKey'].forEach((id) => { $(id).addEventListener('input', autoSaveSettings); $(id).addEventListener('change', autoSaveSettings); });
 $('btnSettings').addEventListener('click', openSettings);
-$('closeSettings').addEventListener('click', () => { readSettingsForm(); $('settings').hidden = true; scheduleSync(300); });
+$('closeSettings').addEventListener('click', () => { readSettingsForm(); hideAnim($('settings'), 200); scheduleSync(300); });
 $('saveSettings').addEventListener('click', () => { readSettingsForm(); $('testResult').textContent = 'Kaydedildi ✓'; });
 $('testConn').addEventListener('click', async () => {
   readSettingsForm();
@@ -1259,6 +1337,7 @@ document.querySelectorAll('[data-save-loc]').forEach((b) => b.addEventListener('
 // ---------- Bağlantılar ----------
 document.querySelectorAll('#siteTabs button').forEach((b) => b.addEventListener('click', () => selectSite(b.dataset.site)));
 document.querySelectorAll('#picker [data-site]').forEach((b) => b.addEventListener('click', () => selectSite(b.dataset.site)));
+document.addEventListener('touchstart', () => {}, { passive: true }); // iOS: :active (basılı durum) hemen çalışsın
 $('prevDay').addEventListener('click', () => setDate(shiftDate(state.date, -1)));
 $('nextDay').addEventListener('click', () => setDate(shiftDate(state.date, 1)));
 $('dateInput').addEventListener('change', (e) => setDate(e.target.value));
