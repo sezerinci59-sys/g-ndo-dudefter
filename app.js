@@ -613,7 +613,20 @@ $('dateInput').addEventListener('change', (e) => setDate(e.target.value));
 async function init() {
   try { navigator.storage?.persist?.(); } catch { /* yoksay */ }
   await syncMeta();
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) {
+    // Otomatik güncelleme: uygulama her öne geldiğinde yeni sürüm var mı bakılır;
+    // varsa sayfa bir kez kendiliğinden yenilenir (veriler telefonda kalır).
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (!hadController || reloaded) return; reloaded = true; location.reload();
+    });
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((reg) => {
+      const check = () => { try { reg.update(); } catch { /* yoksay */ } };
+      document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') check(); });
+      window.addEventListener('online', check);
+    }).catch(() => {});
+  }
   const last = ls.get('sd_site', null);
   renderDate(); renderTabs(); refreshBanner();
   if (last && SITES[last]) await selectSite(last);

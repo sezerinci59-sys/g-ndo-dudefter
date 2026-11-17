@@ -1,4 +1,4 @@
-const CACHE = 'santiye-defteri-v3';
+const CACHE = 'santiye-defteri-v4';
 const SHELL = [
   './', './index.html', './app.css', './app.js', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'
@@ -16,21 +16,26 @@ self.addEventListener('activate', (e) => {
   );
 });
 
+// Ağ öncelikli: internet varsa her zaman en yeni dosya (HTTP önbelleği atlanır),
+// yoksa ya da 4 sn içinde yanıt gelmezse telefondaki kopya kullanılır.
 self.addEventListener('fetch', (e) => {
   const req = e.request;
   const url = new URL(req.url);
-  // Apps Script ve diğer dış istekler: doğrudan ağ (service worker karışmaz)
   if (req.method !== 'GET' || url.origin !== self.location.origin) return;
-  e.respondWith(
-    caches.match(req, { ignoreSearch: true }).then((hit) => {
+  e.respondWith((async () => {
+    const cache = await caches.open(CACHE);
+    try {
+      const res = await Promise.race([
+        fetch(req, { cache: 'no-cache' }),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('zaman aşımı')), 4000)),
+      ]);
+      if (res && res.ok) cache.put(req, res.clone());
+      return res;
+    } catch {
+      const hit = await cache.match(req, { ignoreSearch: true });
       if (hit) return hit;
-      return fetch(req).then((res) => {
-        if (res && res.ok) {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(req, copy));
-        }
-        return res;
-      }).catch(() => (req.mode === 'navigate' ? caches.match('./index.html') : Response.error()));
-    })
-  );
+      if (req.mode === 'navigate') return (await cache.match('./index.html')) || Response.error();
+      return Response.error();
+    }
+  })());
 });
