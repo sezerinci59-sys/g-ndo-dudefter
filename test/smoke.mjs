@@ -66,8 +66,11 @@ check((await page.locator('.chip').count()) === 2, 'İki isim eklendi');
 
 // Puantaj: biri Tam, biri Yarım
 await page.click('.chip[data-name="Ali Veli"]');
-await page.click('.chip[data-name="Ayşe Yılmaz"]');
-await page.click('.chip[data-name="Ayşe Yılmaz"]');
+check((await page.locator('.chip.full[data-name="Ali Veli"]').count()) === 1, 'kısa dokunuş = Tam');
+const longPress = async (sel) => { const b = await page.locator(sel).boundingBox(); await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2); await page.mouse.down(); await page.waitForTimeout(600); await page.mouse.up(); };
+await longPress('.chip[data-name="Ayşe Yılmaz"]');
+await page.waitForTimeout(100);
+check((await page.locator('.chip.half[data-name="Ayşe Yılmaz"]').count()) === 1, 'uzun basış = Yarım (kısa dokunuş tetiklenmedi)');
 const summary = await page.textContent('#summary');
 check(summary.includes('2 kişi') && summary.includes('1,5 gün'), 'Özet: ' + summary);
 
@@ -233,6 +236,27 @@ const noteKept = await page.evaluate(() => new Promise((res) => {
   };
 }));
 check(noteKept.includes('Çevrimdışı not.'), 'çevrimdışı not IndexedDB içinde duruyor');
+
+// Ayarlar kalıcılığı (Kapat ile) ve IndexedDB'den geri yükleme
+const ctx3 = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+const p3 = await ctx3.newPage();
+await p3.goto(base + 'index.html');
+await p3.locator('#picker [data-site="gundogdu"]').click();
+await p3.click('#btnSettings');
+await p3.fill('#setUrl', 'https://example.test/exec'); await p3.fill('#setKey', 'abc123');
+check((await p3.textContent('#testResult')).includes('Kaydedildi'), 'yazınca Kaydedildi ✓ görünür');
+await p3.click('#closeSettings');
+await p3.reload();
+await p3.waitForSelector('#picker', { state: 'hidden' });
+await p3.click('#btnSettings');
+check((await p3.inputValue('#setUrl')) === 'https://example.test/exec' && (await p3.inputValue('#setKey')) === 'abc123', 'Kapat sonrası yenileme: ayarlar duruyor');
+await p3.waitForTimeout(300);
+await p3.evaluate(() => localStorage.clear());
+await p3.reload();
+await p3.waitForSelector('#picker', { state: 'hidden' });
+await p3.click('#btnSettings');
+check((await p3.inputValue('#setUrl')) === 'https://example.test/exec' && (await p3.inputValue('#setKey')) === 'abc123', 'localStorage silinince IndexedDB den geri yüklendi');
+await ctx3.close();
 
 // Ayar yoksa Türkçe uyarı
 await page.unroute(GAS);

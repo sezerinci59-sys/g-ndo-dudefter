@@ -9,8 +9,23 @@ const $ = (id) => document.getElementById(id);
 // ---------- localStorage (hata verebilir: her erişim korumalı) ----------
 const ls = {
   get(k, d = null) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
-  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* yoksay */ } }
+  set(k, v) {
+    try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* yoksay */ }
+    if (META_KEYS.includes(k)) mirrorMeta(k, v);
+  }
 };
+const META_KEYS = ['sd_settings', 'sd_coords', 'sd_site'];
+function mirrorMeta(k, v) { dbPut('meta', { k, v }).catch(() => {}); }
+async function syncMeta() {
+  for (const k of META_KEYS) {
+    try {
+      const l = ls.get(k, null);
+      const rec = await dbGet('meta', k);
+      if (l === null && rec && rec.v != null) { try { localStorage.setItem(k, JSON.stringify(rec.v)); } catch { /* yoksay */ } }
+      else if (l !== null && !rec) mirrorMeta(k, l);
+    } catch { /* yoksay */ }
+  }
+}
 const getSettings = () => { const s = ls.get('sd_settings', {}) || {}; return { url: (s.url || '').trim(), key: (s.key || '').trim() }; };
 
 // ---------- IndexedDB ----------
@@ -18,15 +33,18 @@ let dbPromise;
 function openDB() {
   if (dbPromise) return dbPromise;
   dbPromise = new Promise((resolve, reject) => {
-    const r = indexedDB.open('santiye-defteri', 1);
+    const r = indexedDB.open('santiye-defteri', 2);
     r.onupgradeneeded = () => {
       const db = r.result;
-      db.createObjectStore('days', { keyPath: 'key' });
-      db.createObjectStore('names', { keyPath: 'site' });
-      const p = db.createObjectStore('photos', { keyPath: 'id', autoIncrement: true });
-      p.createIndex('siteDate', ['site', 'date']);
-      p.createIndex('status', 'status');
-      db.createObjectStore('queue', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('days')) db.createObjectStore('days', { keyPath: 'key' });
+      if (!db.objectStoreNames.contains('names')) db.createObjectStore('names', { keyPath: 'site' });
+      if (!db.objectStoreNames.contains('photos')) {
+        const p = db.createObjectStore('photos', { keyPath: 'id', autoIncrement: true });
+        p.createIndex('siteDate', ['site', 'date']);
+        p.createIndex('status', 'status');
+      }
+      if (!db.objectStoreNames.contains('queue')) db.createObjectStore('queue', { keyPath: 'id' });
+      if (!db.objectStoreNames.contains('meta')) db.createObjectStore('meta', { keyPath: 'k' });
     };
     r.onsuccess = () => resolve(r.result);
     r.onerror = () => reject(r.error);
@@ -271,12 +289,32 @@ function renderLocInfo() {
 }
 
 // ---------- Puantaj olayları ----------
+const press = { timer: null, suppress: false, x: 0, y: 0, el: null };
+function pressEnd() { clearTimeout(press.timer); press.timer = null; if (press.el) press.el.classList.remove('pressing'); press.el = null; }
+$('chips').addEventListener('pointerdown', (e) => {
+  const t = e.target.closest('button.chip'); if (!t || (e.pointerType === 'mouse' && e.button !== 0)) return;
+  pressEnd(); press.suppress = false; press.x = e.clientX; press.y = e.clientY; press.el = t; t.classList.add('pressing');
+  const n = t.dataset.name;
+  press.timer = setTimeout(async () => {
+    press.timer = null; press.suppress = true; pressEnd();
+    try { navigator.vibrate?.(15); } catch { /* yoksay */ }
+    const att = state.day.attendance;
+    att[n] = att[n] === 0.5 ? 1 : 0.5;
+    renderChips(); await persistDay(state.day);
+  }, 450);
+});
+$('chips').addEventListener('pointermove', (e) => {
+  if (press.timer && Math.hypot(e.clientX - press.x, e.clientY - press.y) > 10) pressEnd();
+});
+['pointerup', 'pointercancel', 'pointerleave'].forEach((ev) => $('chips').addEventListener(ev, () => { if (press.timer) pressEnd(); else if (press.el) pressEnd(); }));
+$('chips').addEventListener('contextmenu', (e) => { if (e.target.closest('.chip')) e.preventDefault(); });
 $('chips').addEventListener('click', async (e) => {
   const t = e.target.closest('button'); if (!t) return;
   const att = state.day.attendance;
   if (t.dataset.name) {
+    if (press.suppress) { press.suppress = false; return; }
     const n = t.dataset.name, v = att[n];
-    if (!v) att[n] = 1; else if (v === 1) att[n] = 0.5; else delete att[n];
+    if (!v) att[n] = 1; else delete att[n];
     renderChips(); await persistDay(state.day);
   } else if (t.dataset.all) {
     const mem = state.members.filter((m) => m.teamId === t.dataset.all);
@@ -324,6 +362,7 @@ function renderTeamSettings() {
     w.appendChild(el('div', { className: 'tset-row' }, nm, btn('Adı kaydet', { 'data-trename': t.id })));
     const mem = state.members.filter((m) => m.teamId === t.id);
     const det = el('details', { className: 'tmembers' }, el('summary', { text: `Kişiler (${mem.length})` }));
+    det.open = true;
     for (const m of mem) {
       const sel = el('select', { 'aria-label': m.name + ' ekibi' }); sel.dataset.move = m.name;
       for (const o of state.teams) sel.appendChild(el('option', { value: o.id, text: o.name + (o.hidden ? ' (gizli)' : ''), selected: o.id === m.teamId }));
@@ -540,9 +579,11 @@ function openSettings() {
   $('testResult').textContent = ''; ui.hideTeam = null; ui.delName = null; renderTeamSettings(); renderLocInfo(); $('settings').hidden = false;
 }
 function readSettingsForm() { ls.set('sd_settings', { url: $('setUrl').value.trim(), key: $('setKey').value.trim() }); }
+function autoSaveSettings() { readSettingsForm(); $('testResult').textContent = 'Kaydedildi ✓'; }
+['setUrl', 'setKey'].forEach((id) => { $(id).addEventListener('input', autoSaveSettings); $(id).addEventListener('change', autoSaveSettings); });
 $('btnSettings').addEventListener('click', openSettings);
-$('closeSettings').addEventListener('click', () => { $('settings').hidden = true; scheduleSync(300); });
-$('saveSettings').addEventListener('click', () => { readSettingsForm(); $('testResult').textContent = 'Kaydedildi.'; });
+$('closeSettings').addEventListener('click', () => { readSettingsForm(); $('settings').hidden = true; scheduleSync(300); });
+$('saveSettings').addEventListener('click', () => { readSettingsForm(); $('testResult').textContent = 'Kaydedildi ✓'; });
 $('testConn').addEventListener('click', async () => {
   readSettingsForm();
   const { url, key } = getSettings(); const out = $('testResult');
@@ -570,6 +611,8 @@ $('dateInput').addEventListener('change', (e) => setDate(e.target.value));
 
 // ---------- Başlangıç ----------
 async function init() {
+  try { navigator.storage?.persist?.(); } catch { /* yoksay */ }
+  await syncMeta();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   const last = ls.get('sd_site', null);
   renderDate(); renderTabs(); refreshBanner();
