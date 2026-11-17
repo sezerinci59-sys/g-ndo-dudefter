@@ -1,5 +1,7 @@
 // Sürüm notları — her güncellemede en üste yeni satır eklenir.
 export const SURUMLER = [
+  { v: '2.6', t: '18.11.2026', n: ['Ayarlar > Excel indir: aylık puantaj, şablonla aynı düzen ve renklerde .xlsx.'] },
+  { v: '2.5.1', t: '18.11.2026', n: ['Ayarlar > Ekipler: kişi adı ✏️ ile düzeltilebilir (puantaj kayıtları da yeni adla gider).', 'Ekip düğmeleriyle ve isim aramasıyla liste süzülür.', 'Kişi satırları daha derli toplu.'] },
   { v: '2.5', t: '18.11.2026', n: ['Tek ekip listesi: iki şantiyede aynı kişiler görünür (puantaj yine şantiyeye göre ayrı).', '"İthal" olanlar listenin sonunda.', 'Başlıktaki beyaz parlama kaldırıldı, yazı daha okunaklı.', 'Ayarlar > Ekipler: "Sigorta çıkışı" — kişi silinmez, Arşiv bölümüne gider, "Geri al" ile döner.'] },
   { v: '2.4', t: '18.11.2026', n: ['Ayarlar > Kayıt defteri: Drive ile yapılan her işlem (başarılı/hata) kaydedilir; "Kopyala" ile paylaşılabilir. Anahtar ve fotoğraf içeriği yazılmaz.'] },
   { v: '2.3', t: '18.11.2026', n: ['Gereksiz bilgi kutusu gizlenir; Apps Script uyarısı artık sadece Ayarlar\'da görünür.', '"Bağlantıyı test et" artık Apps Script\'in güncel mi eski mi olduğunu da söyler.'] },

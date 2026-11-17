@@ -237,3 +237,18 @@ body{background:linear-gradient(#eef1f6,#dfe5ee) fixed;background-color:#e6eaf1}
 /* 2.5: başlık çubuğu düz koyu mavi, parlama yok (okunurluk) */
 .top{background:linear-gradient(#2d6fc2,#1f5fae)!important;-webkit-backdrop-filter:none;backdrop-filter:none}
 .apptitle{text-shadow:0 1px 2px rgba(0,0,0,.55)}
+/* Ekipler: süzgeç ve sıkı kişi satırları */
+.pills{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:6px}
+.pill{min-height:44px;padding:0 12px;border-radius:22px;border:1px solid #7f9db9;background:linear-gradient(#fff,#e3ecf7);font-size:15px}
+.pill.on{background:linear-gradient(#cfe6fb,#9cc4ee);font-weight:700;border-color:#0b4fb8}
+#tfSearch{width:100%;min-height:44px;padding:0 10px;border-radius:3px;border:1px solid #abadb3;font-size:16px;margin-bottom:8px;box-sizing:border-box}
+.mrow{display:block;padding:4px 0}
+.mline{display:flex;gap:6px;align-items:center;min-height:44px}
+.mline .mname{flex:1;min-width:0}
+.mline .rinput{flex:1;min-width:0;min-height:44px;padding:0 8px;font-size:16px;border:1px solid #abadb3;border-radius:3px;box-sizing:border-box}
+.mrow .btn.ic{min-width:44px;min-height:44px;padding:0}
+.mact{display:flex;gap:8px;align-items:center}
+.mact select{flex:1}
+
+/* Tam/Yarım yazısı gösterilmez; renk yeterli */
+#chips .chip small{display:none}

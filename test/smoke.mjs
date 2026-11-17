@@ -537,6 +537,93 @@ await ctx2.close();
   await p5.click('#closeSettings');
   check((await p5.locator('#chips section.team', { has: p5.locator('h3', { hasText: /^Kalıp$/ }) }).locator('.chip[data-name="Zeki"]').count()) === 1, 'Geri al: Zeki Kalıp ekibine döndü');
   check(await until5(() => (srv5.rosters.gundogdu.find((t) => t.name === 'Kalıp').members || []).includes('Zeki')), 'geri alma sunucuya gitti');
+  // 2.5.1: yeniden adlandırma, süzgeç
+  await p5.click('#btnSettings');
+  await p5.locator('#teamSettings button[data-ren="Zeki"]').click();
+  await p5.locator('#teamSettings input[data-rinput]').fill('Mehmet');
+  await p5.locator('#teamSettings button[data-rensave]').click();
+  check((await p5.locator('#teamSettings input[data-rinput]').count()) === 1, 'yinelenen isim reddedildi (düzenleme açık kaldı)');
+  await p5.locator('#teamSettings input[data-rinput]').fill('Zeki Usta');
+  await p5.locator('#teamSettings button[data-rensave]').click();
+  await p5.waitForSelector('#teamSettings .mname:has-text("Zeki Usta")');
+  check(true, 'isim değişti');
+  const dk = await p5.evaluate((y) => new Promise((res) => { const r = indexedDB.open('santiye-defteri'); r.onsuccess = () => { const q = r.result.transaction('days').objectStore('days').get('koseilyas|' + y); q.onsuccess = () => res(q.result); }; }), yIso5);
+  check(dk && dk.attendance['Zeki Usta'] === 1 && !('Zeki' in dk.attendance), 'puantaj kayıtlarında isim değişti: ' + JSON.stringify(dk && dk.attendance));
+  check(await until5(() => (srv5.days['koseilyas|' + yIso5].attendance['Zeki Usta'] === 1)), 'yeni isimle saveDay gitti');
+  check(await until5(() => (srv5.rosters.gundogdu.find((t) => t.name === 'Kalıp').members || []).includes('Zeki Usta')), 'yeni isim sunucu listesinde');
+  await p5.locator('#tfPills button', { hasText: /^Ekipsiz$/ }).click();
+  check((await p5.locator('#teamSettings .tset').count()) === 1 && (await p5.locator('#teamSettings .mname', { hasText: 'Ali Köse' }).count()) === 1, 'ekip düğmesi süzdü');
+  await p5.locator('#tfPills button', { hasText: 'Tümü' }).click();
+  await p5.fill('#tfSearch', 'AHMET');
+  check((await p5.locator('#teamSettings .mname').count()) === 1, 'arama süzdü');
+  await p5.fill('#tfSearch', '');
+  await p5.click('#closeSettings');
+  // 2.6: Excel
+  {
+    const XLDIR = '/tmp/claude-0/-home-user/dfd6405a-5f4c-5037-9513-cd07bd58f531/scratchpad/xl';
+    const xlFile = XLDIR + '/node_modules/exceljs/dist/exceljs.min.js';
+    if (!fs.existsSync(xlFile)) { check(false, 'exceljs test dosyası yok: ' + xlFile); }
+    else {
+      await p5.route('https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js', (route) => route.fulfill({ status: 200, contentType: 'text/javascript', headers: { 'access-control-allow-origin': '*' }, body: fs.readFileSync(xlFile) }));
+      const ym = tIso5.slice(0, 7), day = (n) => `${ym}-${String(n).padStart(2, '0')}`;
+      srv5.days['gundogdu|' + day(1)] = { attendance: { 'Mehmet': 1, 'Ahmet İthal': 0.5, 'Yabancı Kişi': 1 }, note: '' };
+      srv5.days['gundogdu|' + day(2)] = { attendance: { 'Mehmet': 1 }, note: '' };
+      // Kalıpçı ve Demirci ekipleri
+      await p5.fill('#newTeam', 'Demirci'); await p5.click('#addTeam');
+      await p5.fill('#newTeam', 'KALIPÇI'); await p5.click('#addTeam');
+      const dem = p5.locator('#chips section.team', { has: p5.locator('h3', { hasText: /^Demirci$/ }) });
+      await dem.locator('form.teamadd input').fill('Demir Ali'); await dem.locator('form.teamadd button').click();
+      await p5.waitForSelector('#chips .chip[data-name="Demir Ali"]');
+      const kal2 = p5.locator('#chips section.team', { has: p5.locator('h3', { hasText: /^KALIPÇI$/ }) });
+      await kal2.locator('form.teamadd input').fill('Kalıp Bir'); await kal2.locator('form.teamadd button').click();
+      await kal2.locator('form.teamadd input').fill('Kalıp İki'); await kal2.locator('form.teamadd button').click();
+      await p5.waitForSelector('#chips .chip[data-name="Kalıp İki"]');
+      srv5.days['gundogdu|' + day(3)] = { attendance: { 'Kalıp İki': 1, 'Demir Ali': 1 }, note: '' };
+      await p5.click('#btnSettings');
+      await p5.selectOption('#xlSite', 'gundogdu');
+      await p5.evaluate(() => { const c = HTMLAnchorElement.prototype.click; HTMLAnchorElement.prototype.click = function () { window.__dlName = this.download; return c.call(this); }; });
+      const dl = p5.waitForEvent('download', { timeout: 30000 });
+      await p5.click('#xlGo');
+      const dld = await dl;
+      const out = '/tmp/claude-0/-home-user/dfd6405a-5f4c-5037-9513-cd07bd58f531/scratchpad/ornek_puantaj.xlsx';
+      await dld.saveAs(out);
+      const mons = ['OCAK', 'ŞUBAT', 'MART', 'NİSAN', 'MAYIS', 'HAZİRAN', 'TEMMUZ', 'AĞUSTOS', 'EYLÜL', 'EKİM', 'KASIM', 'ARALIK'];
+      const mm = mons[Number(ym.slice(5)) - 1], yy = ym.slice(0, 4);
+      const dlName = await p5.evaluate(() => window.__dlName);
+      check(dlName === `Puantaj_GÜNDOĞDU_${mm}-${yy}.xlsx`, 'dosya adı: ' + dlName);
+      const ExcelJS = require(XLDIR + '/node_modules/exceljs');
+      const wb = new ExcelJS.Workbook(); await wb.xlsx.readFile(out);
+      const ws = wb.worksheets[0];
+      check(ws.name === `${mm} ${yy}`, 'sayfa adı: ' + ws.name);
+      check(ws.getCell('A1').value === 'İMATEK PERSONELİNE AİT PUANTAJ CETVELİ (GÜNDOĞDU)' && ws.getCell('A1').font.bold, 'başlık satırı');
+      check(ws.getCell('A2').value === 'İŞYERİ SİCİL NO:', 'sicil satırı');
+      const a3 = ws.getCell('A3').value; const a3t = a3.richText ? a3.richText.map((x) => x.text).join('') : a3;
+      check(a3t === `AİT OLDUĞU ÇALIŞMA DÖNEMİ: ${mm} -${yy}`, 'dönem satırı: ' + a3t);
+      const merges = [...ws.model.merges].sort();
+      check(['A1:AN1', 'A2:AN2', 'A3:AN3', 'H4:AL4'].every((x) => merges.includes(x)), 'birleşik hücreler: ' + merges.join(','));
+      check(ws.getCell('H4').value === 'ÇALIŞTIĞI GÜNLER', 'ÇALIŞTIĞI GÜNLER');
+      const hd = ['SIRA NO', 'PERSONELİN ADI SOYADI', 'T.C NO', 'GÖREVİ', null, 'GİRİŞ TARİHİ', 'ÇIKIŞ TARİHİ'].map((v, i) => ws.getCell(5, i + 1).value === v || (v === null && !ws.getCell(5, 5).value));
+      check(hd.every(Boolean) && ws.getCell('H5').value === 1 && ws.getCell('AL5').value === 31 && ws.getCell('AM5').value === 'ÇALIŞTIĞI SAAT GÜN' && ws.getCell('AN5').value === 'İMZA', 'başlık hücreleri');
+      let rowOf = (nm) => { for (let r = 6; r < 40; r++) if (ws.getCell(r, 2).value === nm) return r; return 0; };
+      const rm = rowOf('MEHMET'), ra = rowOf('AHMET İTHAL'), rz = rowOf('ZEKİ USTA');
+      check(rm > 0 && ws.getCell(rm, 8).value === 1 && ws.getCell(rm, 9).value === 1 && !ws.getCell(rm, 10).value, 'Mehmet 1. ve 2. gün 1');
+      const f = ws.getCell(rm, 39).value; check(f && f.formula === `SUM(H${rm}:AL${rm})` && f.result === 2, 'SUM formülü: ' + JSON.stringify(f));
+      check(ra === rm + 1 || ra > rz, 'Ahmet İthal ekibin sonunda (satır ' + ra + ')');
+      check(ws.getCell(ra, 8).value === 0.5 && ws.getCell(ra, 4).value === 'KALIP', 'Ahmet yarım gün, görevi ekip adı: ' + ws.getCell(ra, 4).value);
+      check(rowOf('YABANCI KİŞİ') > 0, 'listede olmayan ama kaydı olan kişi eklendi');
+      const rk = rowOf('KALIP BİR'), rk2 = rowOf('KALIP İKİ'), rd = rowOf('DEMİR ALİ');
+      const argb = (r, c) => ws.getCell(r, c).fill.fgColor.argb;
+      check(argb(rk, 1) === 'FFFDE9D9' && argb(rk2, 40) === 'FFFCD5B4', 'KALIPÇI satırları şeftali dönüşümlü: ' + argb(rk, 1) + ',' + argb(rk2, 40));
+      check(argb(rd, 1) === 'FFDCE6F1', 'DEMİRCİ satırı mavi: ' + argb(rd, 1));
+      check(ws.getCell(rk, 4).value === 'KALIPÇI' && ws.getCell(rk, 2).border.top.style === 'thin', 'KALIPÇI görev ve çerçeve');
+      const nd = new Date(Number(yy), Number(ym.slice(5)), 0).getDate();
+      if (nd < 31) check(argb(rm, 8 + 30) === 'FFD9D9D9' && !ws.getCell(rm, 38).value, 'ay dışı günler gri');
+      check(ws.getColumn(2).width === 26 && ws.getColumn(8).width === 3.2 && ws.views[0].xSplit === 7 && ws.views[0].ySplit === 5, 'sütun genişliği ve dondurma');
+      check(ws.pageSetup.orientation === 'landscape' && ws.pageSetup.fitToWidth === 1, 'yazdırma ayarı');
+      check(ws.getCell(rm, 2).font.name === 'Calibri' && ws.getCell(rm, 2).font.size === 10, 'Calibri 10');
+      await p5.click('#closeSettings');
+    }
+  }
   check(errs5.length === 0, 'ortak liste/arşiv testinde sayfa hatası yok' + (errs5.length ? ': ' + errs5.join(' | ') : ''));
   await ctx5.close();
 }

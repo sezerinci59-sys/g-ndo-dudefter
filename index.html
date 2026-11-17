@@ -120,7 +120,14 @@
     <div id="testResult" class="hint"></div>
     <h2>Ekipler</h2>
     <p class="hint">Seçili şantiyenin ekipleri. Gizlenen ekibin kayıtları silinmez.</p>
+    <div id="tfBar"><div id="tfPills" class="pills"></div><input type="search" id="tfSearch" placeholder="İsim ara" aria-label="İsim ara" autocomplete="off"></div>
     <div id="teamSettings"></div>
+    <h2>Excel indir</h2>
+    <p class="hint">Seçilen ayın puantajı, şablonla aynı düzende .xlsx olarak indirilir. İnternet gerekir.</p>
+    <label class="field">Ay <input type="month" id="xlMonth"></label>
+    <label class="field">Şantiye <select id="xlSite"><option value="gundogdu">Gündoğdu</option><option value="koseilyas">Köseilyas</option></select></label>
+    <button type="button" class="btn block" id="xlGo">Excel indir (.xlsx)</button>
+    <div id="xlProg" class="hint"></div>
     <h2>Şantiye konumları</h2>
     <p class="hint">Şantiyedeyken düğmeye basın. Sonra uygulama açılınca 300 m içindeki şantiyeyi kendisi seçer.</p>
     <button type="button" class="btn ghost block" data-save-loc="gundogdu">Burayı Gündoğdu olarak kaydet</button>

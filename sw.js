@@ -1,4 +1,4 @@
-const CACHE = 'santiye-defteri-v19';
+const CACHE = 'santiye-defteri-v21';
 const SHELL = [
   './', './index.html', './app.css', './app.js', './surum.js', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'
@@ -11,7 +11,7 @@ self.addEventListener('install', (e) => {
 self.addEventListener('activate', (e) => {
   e.waitUntil(
     caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE && k !== 'santiye-cdn').map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });

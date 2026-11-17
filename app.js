@@ -89,7 +89,7 @@ const fmtNum = (n) => String(n).replace('.', ',');
 
 // ---------- Durum ----------
 const state = { site: null, date: today(), day: null, teams: [], members: [], pulled: false, rosterLoaded: false };
-const ui = { hideTeam: null, delName: null, archName: null, closed: new Set() };
+const ui = { hideTeam: null, delName: null, archName: null, editName: null, filterTeam: null, q: '', closed: new Set() };
 let photoUrls = [];
 
 function toast(msg, ms = 2800) {
@@ -444,41 +444,80 @@ function el(tag, props = {}, ...kids) {
   for (const [k, v] of Object.entries(props)) { if (k === 'text') n.textContent = v; else if (k in n) n[k] = v; else n.setAttribute(k, v); }
   n.append(...kids); return n;
 }
+function renderTeamFilter() {
+  const bar = $('tfPills'); if (!bar) return;
+  if (ui.filterTeam && !state.teams.some((t) => t.id === ui.filterTeam && !isArsiv(t))) ui.filterTeam = null;
+  bar.textContent = '';
+  const pill = (text, id) => { const b = el('button', { type: 'button', className: 'pill' + ((ui.filterTeam || '') === id ? ' on' : ''), text }); b.dataset.tf = id; return b; };
+  bar.appendChild(pill('Tümü', ''));
+  for (const t of state.teams) if (!isArsiv(t)) bar.appendChild(pill(t.name, t.id));
+}
+async function renameMember(old, raw) {
+  const neu = normName(raw);
+  if (!neu) return toast('İsim boş olamaz.');
+  if (neu === old) { ui.editName = null; return renderTeamSettings(); }
+  const m = state.members.find((q) => q.name === old); if (!m) return;
+  if (state.members.some((q) => q !== m && lcTr(q.name) === lcTr(neu))) return toast('Bu isim zaten var.');
+  m.name = neu; ui.editName = null;
+  const moveKey = (att) => {
+    if (!att || !(old in att)) return false;
+    att[neu] = neu in att ? Math.max(att[neu], att[old]) : att[old]; delete att[old]; return true;
+  };
+  for (const rec of await dbAll('days')) {
+    if (state.day && rec.key === state.day.key) continue;
+    if (moveKey(rec.attendance)) await persistDay(rec, { att: true });
+  }
+  if (state.day && moveKey(state.day.attendance)) await persistDay(state.day, { att: true });
+  const info = ls.get('sd_arsiv', {}) || {};
+  if (info[old]) { info[neu] = info[old]; delete info[old]; ls.set('sd_arsiv', info); }
+  await persistRoster();
+  renderTeamSettings(); renderChips(); toast('İsim değişti.');
+}
 function renderTeamSettings() {
   const box = $('teamSettings'); box.textContent = '';
   if (!state.site) return;
   const btn = (text, data, cls = 'btn small ghost') => el('button', { type: 'button', className: cls, text, ...data });
+  const matchQ = (m) => !ui.q || lcTr(m.name).includes(lcTr(ui.q));
   const teamBlock = (t) => {
     const w = el('div', { className: 'tset', 'data-tset': t.id });
     const nm = el('input', { type: 'text', value: t.name, 'aria-label': 'Ekip adı' }); nm.dataset.tname = t.id; nm.setAttribute('value', t.name);
     w.appendChild(el('div', { className: 'tset-row' }, nm, btn('Adı kaydet', { 'data-trename': t.id })));
-    const mem = teamMembers(t.id);
+    const mem = teamMembers(t.id).filter(matchQ);
     const det = el('details', { className: 'tmembers' }, el('summary', { text: `Kişiler (${mem.length})` }));
     for (const m of mem) {
       const sel = el('select', { 'aria-label': m.name + ' ekibi' }); sel.dataset.move = m.name;
       for (const o of state.teams.filter((q) => !isArsiv(q))) sel.appendChild(el('option', { value: o.id, text: o.name + (o.hidden ? ' (gizli)' : ''), selected: o.id === m.teamId }));
-      const row = el('div', { className: 'mrow' }, el('span', { className: 'mname', text: m.name }), sel);
-      if (ui.archName === m.name) row.append(btn('Evet, çıkış yap', { 'data-archyes': m.name }, 'btn small danger'), btn('Vazgeç', { 'data-archno': '1' }));
-      else if (ui.delName === m.name) row.append(btn('Evet, sil', { 'data-delyes': m.name }, 'btn small danger'), btn('Vazgeç', { 'data-delno': '1' }));
-      else row.append(btn('Sigorta çıkışı', { 'data-arch': m.name }, 'btn small'), btn('Sil', { 'data-del': m.name }, 'btn small linkdel'));
-      det.appendChild(row);
+      let line;
+      if (ui.editName === m.name) {
+        const inp = el('input', { type: 'text', value: m.name, className: 'rinput', 'aria-label': 'Yeni isim' }); inp.dataset.rinput = m.name; inp.setAttribute('value', m.name);
+        line = el('div', { className: 'mline' }, inp, btn('✔', { 'data-rensave': m.name, 'aria-label': 'Kaydet' }, 'btn small ic'), btn('✕', { 'data-renno': '1', 'aria-label': 'Vazgeç' }, 'btn small ic'));
+      } else {
+        line = el('div', { className: 'mline' }, btn('✏️', { 'data-ren': m.name, 'aria-label': m.name + ' adını düzenle' }, 'btn small ic'), el('span', { className: 'mname', text: m.name }));
+      }
+      const act = el('div', { className: 'mact' }, sel);
+      if (ui.archName === m.name) act.append(btn('Evet, çıkış yap', { 'data-archyes': m.name }, 'btn small danger'), btn('Vazgeç', { 'data-archno': '1' }));
+      else if (ui.delName === m.name) act.append(btn('Evet, sil', { 'data-delyes': m.name }, 'btn small danger'), btn('Vazgeç', { 'data-delno': '1' }));
+      else act.append(btn('Sigorta çıkışı', { 'data-arch': m.name }, 'btn small'), btn('Sil', { 'data-del': m.name }, 'btn small linkdel'));
+      det.appendChild(el('div', { className: 'mrow' }, line, act));
     }
-    det.open = !ui.closed.has(t.id); det.dataset.tid = t.id;
+    det.open = !ui.closed.has(t.id) || !!ui.q; det.dataset.tid = t.id;
     w.appendChild(det);
     if (t.hidden) w.appendChild(btn('Geri getir', { 'data-unhide': t.id }, 'btn small'));
     else if (ui.hideTeam === t.id) w.appendChild(el('div', { className: 'tset-row' }, btn('Evet, gizle', { 'data-hideyes': t.id }, 'btn small danger'), btn('Vazgeç', { 'data-hideno': '1' })));
     else w.appendChild(btn('Ekibi gizle (işi bitti)', { 'data-hide': t.id }));
     return w;
   };
-  const vis = shownTeams(), hid = state.teams.filter((t) => t.hidden && !isArsiv(t));
-  if (!vis.length) box.appendChild(el('p', { className: 'hint', text: 'Görünen ekip yok.' }));
+  renderTeamFilter();
+  const keep = (t) => (!ui.filterTeam || ui.filterTeam === t.id) && (!ui.q || state.members.some((m) => m.teamId === t.id && matchQ(m)));
+  const vis = shownTeams().filter(keep), hid = state.teams.filter((t) => t.hidden && !isArsiv(t)).filter(keep);
+  if (!vis.length && !hid.length) box.appendChild(el('p', { className: 'hint', text: ui.q || ui.filterTeam ? 'Eşleşen kişi yok.' : 'Görünen ekip yok.' }));
   vis.forEach((t) => box.appendChild(teamBlock(t)));
   if (hid.length) {
     box.appendChild(el('h3', { text: 'Gizli ekipler' }));
     hid.forEach((t) => box.appendChild(teamBlock(t)));
   }
   const at = state.teams.find(isArsiv);
-  const arch = at ? state.members.filter((m) => m.teamId === at.id) : [];
+  const arch = at && !ui.filterTeam ? state.members.filter((m) => m.teamId === at.id && matchQ(m)) : [];
   if (arch.length) {
     const info = ls.get('sd_arsiv', {}) || {};
     box.appendChild(el('h3', { text: 'Arşiv (sigorta çıkışı yapılanlar)' }));
@@ -507,6 +546,10 @@ $('teamSettings').addEventListener('click', async (e) => {
   }
   else if (d.arch) { ui.archName = d.arch; ui.delName = null; }
   else if (d.archno) { ui.archName = null; }
+  else if (d.tf !== undefined) { ui.filterTeam = d.tf || null; }
+  else if (d.ren) { ui.editName = d.ren; ui.archName = null; ui.delName = null; }
+  else if (d.renno) { ui.editName = null; }
+  else if (d.rensave) { const i = $('teamSettings').querySelector('input[data-rinput]'); return renameMember(d.rensave, i ? i.value : ''); }
   else if (d.archyes) {
     const m = state.members.find((q) => q.name === d.archyes);
     if (m) {
@@ -539,6 +582,16 @@ $('teamSettings').addEventListener('click', async (e) => {
   renderTeamSettings();
   if (changed) { await persistRoster(); renderChips(); }
 });
+$('tfPills').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-tf]'); if (!b) return;
+  ui.filterTeam = b.dataset.tf || null; renderTeamSettings();
+});
+$('tfSearch').addEventListener('input', (e) => { ui.q = e.target.value.trim(); renderTeamSettings(); });
+$('teamSettings').addEventListener('keydown', (e) => {
+  const i = e.target.closest && e.target.closest('input[data-rinput]'); if (!i) return;
+  if (e.key === 'Enter') { e.preventDefault(); renameMember(i.dataset.rinput, i.value); }
+  else if (e.key === 'Escape') { ui.editName = null; renderTeamSettings(); }
+});
 $('teamSettings').addEventListener('toggle', (e) => {
   const d = e.target; if (!d.dataset || !d.dataset.tid) return;
   if (d.open) ui.closed.delete(d.dataset.tid); else ui.closed.add(d.dataset.tid);
@@ -548,6 +601,167 @@ $('teamSettings').addEventListener('change', async (e) => {
   const m = state.members.find((q) => q.name === s.dataset.move);
   if (m) { m.teamId = s.value; await persistRoster(); renderTeamSettings(); renderChips(); }
 });
+// ---------- Excel indir ----------
+const EXCELJS_URL = 'https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js';
+async function loadExcelJS() {
+  if (window.ExcelJS) return window.ExcelJS;
+  let text = null;
+  try {
+    const res = await fetch(EXCELJS_URL);
+    if (!res.ok) throw new Error('http ' + res.status);
+    const copy = res.clone(); text = await res.text();
+    try { const c = await caches.open('santiye-cdn'); await c.put(EXCELJS_URL, copy); } catch { /* yoksay */ }
+  } catch {
+    try { const hit = await (await caches.open('santiye-cdn')).match(EXCELJS_URL); if (hit) text = await hit.text(); } catch { /* yoksay */ }
+  }
+  if (!text) throw new Error('Excel kitaplığı yüklenemedi (internet?).');
+  const u = URL.createObjectURL(new Blob([text], { type: 'text/javascript' }));
+  try {
+    await new Promise((ok, no) => { const sc = document.createElement('script'); sc.src = u; sc.onload = ok; sc.onerror = () => no(new Error('Excel kitaplığı çalışmadı.')); document.head.appendChild(sc); });
+  } finally { URL.revokeObjectURL(u); }
+  return window.ExcelJS;
+}
+const XL_PAIRS = [['EBF1DE', 'D8E4BC'], ['E4DFEC', 'CCC0DA'], ['FFF2CC', 'FFE699']];
+function xlColors(teamName, seen) {
+  const k = lcTr(teamName);
+  if (k.includes('demirci')) return ['DCE6F1', 'B8CCE4'];
+  if (k.includes('kalıpçı') || k.includes('kalipci')) return ['FDE9D9', 'FCD5B4'];
+  if (k.includes('mühendis') || k.includes('muhendis') || teamName === '—') return ['FFFFFF', 'FFFFFF'];
+  if (!seen.has(k)) seen.set(k, XL_PAIRS[seen.size % XL_PAIRS.length]);
+  return seen.get(k);
+}
+// Ay için satırlar: [{team, name, att:{gün:değer}, exit}] ekip sırasıyla
+function buildXlRows(att, info, ym) {
+  const groups = new Map(); // lc ekip adı -> {name, people}
+  const grp = (name) => { const k = lcTr(name); if (!groups.has(k)) groups.set(k, { name, people: [] }); return groups.get(k); };
+  const hasAtt = (n) => Object.keys(att[n] || {}).length > 0;
+  const at = state.teams.find(isArsiv);
+  const seen = new Set();
+  for (const t of state.teams) if (!isArsiv(t)) grp(t.name);
+  const add = (m, team, exit) => { seen.add(m.name); grp(team).people.push({ name: m.name, att: att[m.name] || {}, exit }); };
+  for (const t of state.teams) {
+    if (isArsiv(t)) continue;
+    for (const m of teamMembers(t.id)) add(m, t.name, '');
+  }
+  if (at) for (const m of orderMembers(state.members.filter((q) => q.teamId === at.id))) {
+    const i = info[m.name] || {};
+    const inMonth = i.date ? i.date >= ym + '-01' : false;
+    if (inMonth || hasAtt(m.name)) add(m, i.team || 'ARŞİV', i.date ? trDate(i.date) : '');
+  }
+  for (const n of Object.keys(att)) if (!seen.has(n) && hasAtt(n)) { seen.add(n); grp('—').people.push({ name: n, att: att[n], exit: '' }); }
+  return [...groups.values()].filter((g) => g.people.length);
+}
+async function makeXlsx(ym, site, att, info) {
+  const EJ = await loadExcelJS();
+  const [Y, M] = ym.split('-').map(Number);
+  const N = new Date(Y, M, 0).getDate();
+  const mon = MONTHS_TR[M - 1].toLocaleUpperCase('tr');
+  const siteUp = (SITES[site] || site).toLocaleUpperCase('tr');
+  const wb = new EJ.Workbook();
+  const ws = wb.addWorksheet(`${mon} ${Y}`, { views: [{ state: 'frozen', xSplit: 7, ySplit: 5 }],
+    pageSetup: { orientation: 'landscape', fitToPage: true, fitToWidth: 1, fitToHeight: 0 } });
+  const widths = [5, 26, 13, 11, 4, 11, 11]; for (let i = 0; i < 31; i++) widths.push(3.2); widths.push(8, 10);
+  widths.forEach((w, i) => { ws.getColumn(i + 1).width = w; });
+  const font = { name: 'Calibri', size: 10 };
+  const center = { horizontal: 'center', vertical: 'middle' };
+  const thin = { style: 'thin', color: { argb: 'FF000000' } };
+  const border = { top: thin, left: thin, bottom: thin, right: thin };
+  const LAST = 40;
+  for (let r = 1; r <= 4; r++) for (let c = 1; c <= LAST; c++) ws.getCell(r, c).font = font;
+  ws.mergeCells('A1:AN1'); ws.getCell('A1').value = `İMATEK PERSONELİNE AİT PUANTAJ CETVELİ (${siteUp})`;
+  ws.getCell('A1').font = { ...font, bold: true }; ws.getCell('A1').alignment = center;
+  ws.mergeCells('A2:AN2'); ws.getCell('A2').value = 'İŞYERİ SİCİL NO:'; ws.getCell('A2').alignment = center;
+  ws.mergeCells('A3:AN3');
+  ws.getCell('A3').value = { richText: [{ font, text: 'AİT OLDUĞU ÇALIŞMA DÖNEMİ: ' }, { font: { ...font, bold: true }, text: `${mon} -${Y}` }] };
+  ws.getCell('A3').alignment = center;
+  ws.mergeCells('H4:AL4'); ws.getCell('H4').value = 'ÇALIŞTIĞI GÜNLER'; ws.getCell('H4').font = { ...font, bold: true }; ws.getCell('H4').alignment = center;
+  const head = ['SIRA NO', 'PERSONELİN ADI SOYADI', 'T.C NO', 'GÖREVİ', '', 'GİRİŞ TARİHİ', 'ÇIKIŞ TARİHİ'];
+  for (let d = 1; d <= 31; d++) head.push(d);
+  head.push('ÇALIŞTIĞI SAAT GÜN', 'İMZA');
+  head.forEach((v, i) => {
+    const c = ws.getCell(5, i + 1); c.value = v === '' ? null : v; c.font = { ...font, bold: true };
+    c.alignment = { ...center, wrapText: true }; c.border = border;
+  });
+  const fill = (hex) => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + hex } });
+  const colors = new Map();
+  let r = 6, no = 0;
+  for (const g of buildXlRows(att, info, ym)) {
+    const pair = xlColors(g.name, colors);
+    g.people.forEach((p, idx) => {
+      no++;
+      const row = ws.getRow(r);
+      const base = fill(pair[idx % 2]);
+      for (let c = 1; c <= LAST; c++) { const cell = row.getCell(c); cell.font = font; cell.fill = base; cell.border = border; cell.alignment = center; }
+      row.getCell(1).value = no;
+      row.getCell(2).value = p.name.toLocaleUpperCase('tr'); row.getCell(2).alignment = { vertical: 'middle', horizontal: 'left' };
+      row.getCell(4).value = g.name.toLocaleUpperCase('tr');
+      if (p.exit) row.getCell(7).value = p.exit;
+      let sum = 0;
+      for (let d = 1; d <= 31; d++) {
+        const cell = row.getCell(7 + d);
+        if (d > N) { cell.fill = fill('D9D9D9'); continue; }
+        const v = Number(p.att[d]);
+        if (v > 0) { cell.value = v; sum += v; }
+      }
+      row.getCell(39).value = { formula: `SUM(H${r}:AL${r})`, result: sum };
+      row.getCell(39).font = { ...font, bold: true };
+      r++;
+    });
+  }
+  return wb.xlsx.writeBuffer();
+}
+async function downloadXlsx(buf, name) {
+  const type = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
+  const blob = new Blob([buf], { type });
+  const ios = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  if (ios && navigator.canShare) {
+    try {
+      const f = new File([blob], name, { type });
+      if (navigator.canShare({ files: [f] })) { await navigator.share({ files: [f], title: name }); return; }
+    } catch (e) { if (e && e.name === 'AbortError') return; }
+  }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 30000);
+}
+let xlBusy = false;
+$('xlMonth').value = today().slice(0, 7);
+async function exportExcel() {
+  if (xlBusy) return;
+  const ym = $('xlMonth').value, site = $('xlSite').value;
+  if (!/^\d{4}-\d{2}$/.test(ym)) return toast('Önce ayı seçin.');
+  if (!navigator.onLine || !canPull()) return toast(navigator.onLine ? 'Önce Apps Script adresi ve anahtarı girin.' : 'İnternet yok; Excel için bağlantı gerekir.');
+  xlBusy = true; const btn = $('xlGo'), prog = $('xlProg'); btn.disabled = true;
+  try {
+    await loadRoster();
+    const [Y, M] = ym.split('-').map(Number), N = new Date(Y, M, 0).getDate();
+    const att = {}; let done = 0, next = 1, fail = null;
+    prog.textContent = `0/${N} gün…`;
+    const worker = async () => {
+      while (!fail && next <= N) {
+        const d = next++, date = `${ym}-${pad(d)}`;
+        let a;
+        try {
+          const loc = await dbGet('days', dayKey(site, date));
+          if (loc && isAttDirty(loc)) a = loc.attendance || {};
+          else { const data = await post({ action: 'getDay', site, date }); a = {}; for (const [n, v] of Object.entries((data && data.attendance) || {})) if (Number(v) > 0) a[n] = Number(v); }
+        } catch (err) { fail = err; return; }
+        for (const [n, v] of Object.entries(a)) if (v > 0) (att[n] || (att[n] = {}))[d] = Number(v);
+        prog.textContent = `${++done}/${N} gün…`;
+      }
+    };
+    await Promise.all([1, 2, 3, 4].map(worker));
+    if (fail) throw fail;
+    prog.textContent = 'Dosya hazırlanıyor…';
+    const buf = await makeXlsx(ym, site, att, ls.get('sd_arsiv', {}) || {});
+    const name = `Puantaj_${(SITES[site] || site).toLocaleUpperCase('tr')}_${MONTHS_TR[M - 1].toLocaleUpperCase('tr')}-${Y}.xlsx`;
+    await downloadXlsx(buf, name);
+    prog.textContent = 'Hazır: ' + name;
+  } catch (err) {
+    prog.textContent = ''; toast('Excel hazırlanamadı: ' + (err && err.message ? err.message : err), 4500);
+  } finally { xlBusy = false; btn.disabled = false; }
+}
+$('xlGo').addEventListener('click', exportExcel);
 $('copyYesterday').addEventListener('click', async () => {
   const prev = await dbGet('days', dayKey(state.site, shiftDate(state.date, -1)));
   if (!prev || !Object.keys(prev.attendance || {}).length) return toast('Dünkü liste bulunamadı.');
@@ -999,10 +1213,12 @@ $('logCopy')?.addEventListener('click', async () => {
 });
 $('logClear')?.addEventListener('click', () => { try { localStorage.removeItem('sd_log'); } catch { /* yoksay */ } renderLog(); toast('Kayıt temizlendi.'); });
 function openSettings() {
+  if (state.site) $('xlSite').value = state.site;
+  if (!$('xlMonth').value) $('xlMonth').value = today().slice(0, 7);
   renderLog();
   renderSurum();
   const s = getSettings(); $('setUrl').value = s.url; $('setKey').value = s.key;
-  $('testResult').textContent = ''; ui.hideTeam = null; ui.delName = null; ui.archName = null; renderTeamSettings(); renderLocInfo(); $('settings').hidden = false;
+  $('testResult').textContent = ''; ui.hideTeam = null; ui.delName = null; ui.archName = null; ui.editName = null; renderTeamSettings(); renderLocInfo(); $('settings').hidden = false;
   pullRoster();
 }
 function readSettingsForm() { ls.set('sd_settings', { url: $('setUrl').value.trim(), key: $('setKey').value.trim() }); }
