@@ -252,45 +252,17 @@ mockMode = 'ok';
 await page.click('#syncNow'); await settle();
 check(upCount() === upBefore, 'silinen bekleyen fotoğraf için yükleme gönderilmedi');
 
-// yüklenmiş fotoğraf: deletePhoto kuyruğa girer ve gider
+// yüklenmiş fotoğraf: sadece listeden kalkar, Drive'a silme isteği GİTMEZ
 const sentPhoto = (await idbPhotos()).find((p) => p.status === 'sent');
 check(!!(sentPhoto && sentPhoto.fileId), 'yüklenmiş fotoğraf fileId taşıyor: ' + (sentPhoto && sentPhoto.fileId));
 await page.locator('#photoGrid .photo.sent .pdel').click();
 await page.waitForSelector('#photoGrid .pdel.armed');
 await page.locator('#photoGrid .photo.sent .pdel').click();
 await waitUntil(async () => (await page.locator('#photoGrid .photo').count()) === 0, 3000);
-check((await page.locator('#photoGrid .photo').count()) === 0, 'yüklenmiş fotoğraf arayüzden gizlendi');
-await waitUntil(() => received.some((r) => r.body.action === 'deletePhoto'));
-const dp = received.filter((r) => r.body.action === 'deletePhoto');
-check(dp.length >= 1 && dp[0].body.fileId === sentPhoto.fileId, 'deletePhoto isteği fileId ile gitti: ' + (dp[0] && dp[0].body.fileId));
-await settle();
-check((await idbPhotos()).length === 0 && (await idbQueue()).length === 0, 'başarılı silmeden sonra kayıt ve kuyruk temiz');
-
-// eski Apps Script: bilinmeyen işlem
-await page.setInputFiles('#galInput', jpegFile);
+check((await page.locator('#photoGrid .photo').count()) === 0, 'yüklenmiş fotoğraf listeden kalktı');
 await page.click('#syncNow'); await settle();
-await page.waitForSelector('#photoGrid .photo.sent');
-deleteReply = { ok: false, error: 'unknown action: deletePhoto' };
-await page.locator('#photoGrid .photo.sent .pdel').click();
-await page.waitForSelector('#photoGrid .pdel.armed');
-await page.locator('#photoGrid .photo.sent .pdel').click();
-await page.waitForFunction(() => /Apps Script'i güncelleyin/.test(document.getElementById('syncError').textContent), null, { timeout: 15000 });
-check(true, 'bilinmeyen işlem iletisi: ' + (await page.textContent('#syncError')));
-check((await idbQueue()).some((q) => q.type === 'deletePhoto'), 'silme işlemi kuyrukta bekliyor');
-// diğer öğeler yine de gider
-const sdBefore = received.filter((r) => r.body.action === 'saveDay').length, upB2 = upCount();
-await page.setInputFiles('#galInput', jpegFile);
-await page.fill('#note', 'Silme takılıyken not.');
-await page.waitForFunction(() => document.getElementById('noteState').textContent === 'Kaydedildi');
-await page.click('#syncNow');
-await waitUntil(() => upCount() > upB2 && received.filter((r) => r.body.action === 'saveDay').length > sdBefore);
-check(upCount() > upB2, 'silme takılıyken yeni fotoğraf yine yüklendi');
-check(received.filter((r) => r.body.action === 'saveDay').length > sdBefore, 'silme takılıyken saveDay yine gönderildi');
-await waitUntil(async () => (await idbPhotos()).every((p) => p.status !== 'pending'));
-check((await page.textContent('#syncError')).includes("Apps Script'i güncelleyin"), 'mesaj duruyor');
-deleteReply = null;
-await page.click('#syncNow'); await settle();
-check((await idbQueue()).length === 0 && (await page.locator('#syncError').isHidden()), 'Apps Script güncelleniyor: silme tamamlandı, hata temizlendi');
+check(!received.some((r) => r.body.action === 'deletePhoto'), "Drive'a silme isteği gönderilmedi");
+check((await idbPhotos()).length === 0 && (await idbQueue()).length === 0, 'kayıt ve kuyruk temiz');
 
 // ---- Uygulama içi kamera ----
 await page.evaluate(() => {

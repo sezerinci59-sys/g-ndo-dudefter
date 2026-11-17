@@ -1,5 +1,6 @@
 // Sürüm notları — her güncellemede en üste yeni satır eklenir.
 export const SURUMLER = [
+  { v: '1.8', t: '18.11.2026', n: ['Uygulama Drive\'dan hiçbir şey silmez. ✕ ile gönderilmiş fotoğraf sadece telefondaki listeden kalkar; Drive\'dakini sen elle silersin.', 'İki parmakla yakınlaştırma kapatıldı, ekran düzeni sabit kalır.'] },
   { v: '1.7', t: '18.11.2026', n: ['Ekip listesi Drive\'daki "EKİPLER" sayfasından gelir ve oraya kaydedilir; telefon değişse de isimler kaybolmaz.', 'Geçmiş bir günü açınca o günün puantajı ve notu Drive\'dan yüklenir.', 'Dokunulmayan bir gün, Drive\'daki kaydın üzerine boş olarak yazılmaz.', 'Gönderilen fotoğrafların küçük resmi artık bozulmaz; eskiler "Drive\'da" olarak görünür.', 'Bu özellikler için Apps Script\'in güncellenmesi gerekir.'] },
   { v: '1.6', t: '17.11.2026', n: ['Fotoğraf çek artık uygulamanın kendi kamerasını açar: arka arkaya istediğiniz kadar çekin, her seferinde "Kullan" demek gerekmez. Bitince "Bitti"ye basın.', 'Fotoğrafların köşesindeki ✕ ile fotoğraf silinir (ikinci dokunuşta onaylanır). Gönderilmiş fotoğraf Drive\'dan da silinir; bunun için Apps Script\'in güncellenmesi gerekir (README\'ye bakın).'] },
   { v: '1.5', t: '17.11.2026', n: ['Ayarlar > Sürüm notları: "Güncellemeyi şimdi al" düğmesi.', 'Sayfanın en altında sürüm numarası görünür.'] },

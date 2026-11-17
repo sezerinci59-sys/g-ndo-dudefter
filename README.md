@@ -61,7 +61,7 @@ Bu klasördeki dosyalar (`index.html`, `app.css`, `app.js`, `sw.js`, `manifest.w
 
 ## Apps Script'i güncelleme
 
-Uygulamaya yeni bir özellik (ör. fotoğrafı Drive'dan silme) eklenince `Code.gs` de değişir. Güncellemek için:
+Uygulamaya yeni bir özellik (ör. ekip listesinin Drive'a kaydı) eklenince `Code.gs` de değişir. Güncellemek için:
 
 1. script.google.com adresinde projenizi açın.
 2. Sol taraftaki `Code.gs` içindeki her şeyi silin, yerine `https://raw.githubusercontent.com/sezerinci59-sys/g-ndo-dudefter/main/apps-script/Code.gs` adresindeki yeni kodu yapıştırın. **Kaydet**'e basın.

@@ -254,13 +254,10 @@ async function renderPhotos() {
 async function deletePhoto(id) {
   const p = await dbGet('photos', id);
   if (!p) return;
-  if (p.status === 'sent' && p.fileId) {
-    p.deleted = true; await dbPut('photos', p);
-    await dbPut('queue', { id: `del|${p.fileId}`, type: 'deletePhoto', fileId: p.fileId, photoId: id });
-  } else {
-    await dbDel('photos', id);
-    await dbDel('queue', `photo|${id}`).catch(() => {});
-  }
+  // Uygulama Drive'dan hiçbir şey silmez: gönderilmiş fotoğraf sadece telefondaki listeden kalkar.
+  await dbDel('photos', id);
+  await dbDel('queue', `photo|${id}`).catch(() => {});
+  if (p.status === 'sent') toast("Listeden kaldırıldı. Drive'daki fotoğraf duruyor.");
   await renderPhotos(); refreshBanner(); scheduleSync();
 }
 $('photoGrid').addEventListener('click', async (e) => {
@@ -683,16 +680,9 @@ async function sync(manual = false) {
         continue;
       }
       if (q.type === 'deletePhoto') {
-        try {
-          await post({ action: 'deletePhoto', fileId: q.fileId });
-          await dbDel('queue', q.id);
-          if (q.photoId != null) await dbDel('photos', q.photoId);
-        } catch (err) {
-          if (!err.server) throw err; // internet yok: dur, sonra tekrar
-          if (/unknown action|Bilinmeyen işlem/i.test(err.message)) noDeleteSupport = true;
-          else deleteErr = err.message;
-          // bu öğe kuyrukta kalır; diğerleri devam eder
-        }
+        // Drive'dan silme kaldırıldı (silme elle yapılır): eski kuyruk öğesi atılır.
+        await dbDel('queue', q.id);
+        if (q.photoId != null) await dbDel('photos', q.photoId);
         refreshBanner();
         continue;
       }
@@ -719,10 +709,7 @@ async function sync(manual = false) {
       const base64 = await blobToBase64(p.blob);
       const r = await post({ action: 'uploadPhoto', site: p.site, date: p.date, name: p.name, base64 });
       const cur = await dbGet('photos', p.id);
-      if (!cur) { // yüklenirken kullanıcı sildi: Drive'dan da silinsin
-        if (r.fileId) await dbPut('queue', { id: `del|${r.fileId}`, type: 'deletePhoto', fileId: r.fileId });
-        continue;
-      }
+      if (!cur) continue; // yüklenirken listeden kaldırıldı; Drive'daki dosyaya dokunulmaz
       if (!cur.thumbData && cur.blob) { // eski kayıt: büyük dosyadan küçük resmi yazı olarak üret
         try { const bm = await createImageBitmap(cur.blob); cur.thumbData = 'data:image/jpeg;base64,' + await blobToBase64(await toJpeg(bm, 240, 0.7)); } catch { /* yoksay */ }
       }
@@ -915,3 +902,7 @@ async function init() {
   sync();
 }
 init();
+
+// iPhone'da iki parmakla yakınlaştırmayı kapat (düzen sabit kalsın)
+['gesturestart', 'gesturechange', 'gestureend'].forEach((ev) => document.addEventListener(ev, (e) => e.preventDefault(), { passive: false }));
+document.addEventListener('touchmove', (e) => { if (e.touches && e.touches.length > 1) e.preventDefault(); }, { passive: false });
