@@ -1,3 +1,4 @@
+import { SURUMLER } from './surum.js';
 // Şantiye Defteri - ana uygulama (çerçevesiz, derleme yok, çevrimdışı çalışır)
 const SITES = { gundogdu: 'Gündoğdu', koseilyas: 'Köseilyas' };
 const RADIUS_M = 300;
@@ -574,7 +575,17 @@ window.addEventListener('online', () => sync());
 setInterval(() => { if (document.visibilityState === 'visible') sync(); }, 60000);
 
 // ---------- Ayarlar ----------
+function renderSurum() {
+  const box = $('surumNotlari'); if (!box) return; box.textContent = '';
+  SURUMLER.forEach((r, i) => {
+    const d = document.createElement('details'); if (i === 0) d.open = true; d.className = 'surum';
+    const sm = document.createElement('summary'); sm.textContent = `Sürüm ${r.v} · ${r.t}` + (i === 0 ? ' (şu an kullanılan)' : '');
+    const ul = document.createElement('ul'); r.n.forEach((x) => { const li = document.createElement('li'); li.textContent = x; ul.appendChild(li); });
+    d.append(sm, ul); box.appendChild(d);
+  });
+}
 function openSettings() {
+  renderSurum();
   const s = getSettings(); $('setUrl').value = s.url; $('setKey').value = s.key;
   $('testResult').textContent = ''; ui.hideTeam = null; ui.delName = null; renderTeamSettings(); renderLocInfo(); $('settings').hidden = false;
 }
@@ -617,6 +628,11 @@ async function init() {
     // Otomatik güncelleme: uygulama her öne geldiğinde yeni sürüm var mı bakılır;
     // varsa sayfa bir kez kendiliğinden yenilenir (veriler telefonda kalır).
     const hadController = !!navigator.serviceWorker.controller;
+    try {
+      const cur = SURUMLER[0].v, last = localStorage.getItem('sd_surum');
+      if (last && last !== cur) setTimeout(() => toast(`Güncellendi: sürüm ${cur} — ayrıntılar Ayarlar'da`, 4500), 600);
+      localStorage.setItem('sd_surum', cur);
+    } catch { /* yoksay */ }
     let reloaded = false;
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       if (!hadController || reloaded) return; reloaded = true; location.reload();
