@@ -903,8 +903,19 @@ $('testConn').addEventListener('click', async () => {
   const { url, key } = getSettings(); const out = $('testResult');
   if (!url || !key) { out.textContent = 'Önce adresi ve anahtarı girin.'; return; }
   out.textContent = 'Deneniyor…';
-  try { await post({ action: 'ping' }); out.textContent = 'Bağlantı başarılı.'; }
-  catch (e) { out.textContent = 'Hata: ' + e.message; }
+  try { await post({ action: 'ping' }); }
+  catch (e) { out.textContent = 'Hata: ' + e.message; return; }
+  try {
+    await post({ action: 'getRoster', site: state.site || 'gundogdu' });
+    try { localStorage.setItem('sd_server_v2', '1'); } catch { /* yoksay */ }
+    out.textContent = 'Bağlantı başarılı. Apps Script: GÜNCEL ✔';
+    needUpdate = false; if (lastError === UPDATE_MSG) setError(''); refreshBanner();
+    if (state.site) pullRoster(state.site);
+  } catch (e) {
+    out.textContent = isUnknownAction(e)
+      ? "Bağlantı var ama Apps Script ESKİ sürümde çalışıyor. Dağıt → Dağıtımları yönet → kalem → Sürüm: 'Yeni sürüm' → Dağıt."
+      : 'Bağlantı var, ekip listesi alınamadı: ' + e.message;
+  }
 });
 document.querySelectorAll('[data-save-loc]').forEach((b) => b.addEventListener('click', async () => {
   const site = b.dataset.saveLoc; const info = $('loc-' + site);
