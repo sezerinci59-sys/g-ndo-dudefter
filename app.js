@@ -171,7 +171,7 @@ function renderTabs() {
   });
   $('puanSite').textContent = SITES[state.site] || '';
 }
-const TEAM_COLORS = ['#3a8a3a', '#245edb', '#e07b00', '#7a4fb5', '#c0392b', '#138d90', '#8b5a2b'];
+const TEAM_COLORS = ['#2f7d2f', '#245edb', '#b45500', '#7a4fb5', '#c0392b', '#0f7a7a', '#8b5a2b'];
 function teamColor(name) { let h = 2166136261; for (const c of String(name)) h = Math.imul(h ^ c.codePointAt(0), 16777619) >>> 0; return TEAM_COLORS[(h >>> 8) % TEAM_COLORS.length]; }
 function chipBtn(name, v) {
   const b = document.createElement('button'); b.type = 'button';
