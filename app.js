@@ -667,12 +667,17 @@ async function refreshBanner() {
   const n = await pendingCount();
   $('pendingCount').textContent = String(n);
   const bar = $('syncBar');
-  bar.classList.toggle('pending', n > 0); bar.classList.toggle('err', !!lastError);
+  // "Apps Script'i güncelleyin" uyarısı ana ekranı kalabalıklaştırmaz: bekleyen öğe yoksa kutu gizlenir,
+  // uyarı Ayarlar'da (#updateNote) görünür.
+  const onlyUpdate = lastError === UPDATE_MSG;
+  const showErr = !!lastError && !(onlyUpdate && n === 0);
+  bar.classList.toggle('pending', n > 0); bar.classList.toggle('err', showErr);
   $('syncText').innerHTML = n > 0 ? `<b id="pendingCount">${n}</b> öğe gönderilmeyi bekliyor` : `<b id="pendingCount">0</b> öğe bekliyor · hepsi gönderildi`;
-  bar.hidden = !(n > 0 || lastError);
+  bar.hidden = !(n > 0 || showErr);
+  const un = $('updateNote'); if (un) un.hidden = !(needUpdate || onlyUpdate);
   $('syncNow').disabled = syncing;
   $('syncNow').textContent = syncing ? 'Gönderiliyor…' : 'Şimdi gönder';
-  const e = $('syncError'); e.hidden = !lastError; e.textContent = lastError;
+  const e = $('syncError'); e.hidden = !showErr; e.textContent = showErr ? lastError : '';
 }
 function setError(msg) { lastError = msg || ''; }
 async function post(payload) {
