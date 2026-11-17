@@ -28,6 +28,7 @@
   <button type="button" data-site="koseilyas" role="tab">Köseilyas</button>
 </nav>
 
+<div id="scroller">
 <main>
   <div class="datebar">
     <button type="button" id="prevDay" class="icon-btn" aria-label="Önceki gün">‹</button>
@@ -54,7 +55,7 @@
     <div id="summary" class="summary"></div>
     <div id="chips" class="chips"></div>
     <div class="row">
-      <button type="button" id="copyYesterday" class="btn ghost">Dünkü listeyi kopyala</button>
+      <button type="button" id="copyYesterday" class="btn ghost">Dünküyle aynı</button>
     </div>
     <form id="teamForm" class="addform" autocomplete="off">
       <input type="text" id="newTeam" placeholder="Yeni ekip adı" aria-label="Yeni ekip adı" autocapitalize="words">
@@ -80,6 +81,8 @@
     <div id="photoGrid" class="photo-grid"></div>
   </section>
 </main>
+<div id="surumEtiket" class="hint" style="text-align:center;padding:8px 0 16px"></div>
+</div>
 
 <div id="picker" class="overlay" hidden>
   <div class="sheet dialog">
@@ -147,7 +150,6 @@
   </div>
 </div>
 
-<div id="surumEtiket" class="hint" style="text-align:center;padding:8px 0 16px"></div>
 <div id="toast" class="toast" role="status" hidden></div>
 <script type="module" src="app.js"></script>
 </body>

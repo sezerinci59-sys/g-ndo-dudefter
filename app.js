@@ -88,7 +88,7 @@ function shortDate(s) {
 const fmtNum = (n) => String(n).replace('.', ',');
 
 // ---------- Durum ----------
-const state = { site: null, date: today(), day: null, teams: [], members: [], pulled: false, rosterLoaded: false };
+const state = { otherAtt: {}, site: null, date: today(), day: null, teams: [], members: [], pulled: false, rosterLoaded: false };
 const ui = { hideTeam: null, delName: null, archName: null, editName: null, filterTeam: null, q: '', closed: new Set() };
 let photoUrls = [];
 
@@ -122,7 +122,39 @@ function toast(msg, ms = 2800) {
 
 // ---------- Gün verisi ----------
 const dayKey = (site, date) => `${site}|${date}`;
+// Aynı gün kuralı: bir kişinin iki şantiyedeki toplamı en fazla 1 gün.
+const LOC = { gundogdu: "Gündoğdu'da", koseilyas: "Köseilyas'ta" };
+const otherSite = () => Object.keys(SITES).find((k) => k !== state.site);
+const otherVal = (n) => Number(state.otherAtt[n]) || 0;
+const remaining = (n) => Math.max(0, 1 - otherVal(n));
+const isBlocked = (n) => remaining(n) <= 0 && !(state.day.attendance[n] > 0);
+const dayWord = () => (state.date === today() ? 'bugün' : 'bu gün');
+function limitedTarget(n, want) { return Math.min(want, remaining(n)); }
+async function loadOther() {
+  const o = otherSite();
+  const rec = o ? await dbGet('days', dayKey(o, state.date)) : null;
+  state.otherAtt = (rec && rec.attendance) || {};
+}
+async function pullOther() {
+  const site = state.site, date = state.date, o = otherSite();
+  if (!site || !o || !canPull()) return;
+  let data;
+  try { data = await post({ action: 'getDay', site: o, date }); } catch { return; }
+  if (!data) return;
+  const att = {};
+  for (const [n, v] of Object.entries(data.attendance || {})) if (Number(v) > 0) att[n] = Number(v);
+  const k = dayKey(o, date);
+  const rec = await dbGet('days', k);
+  // Diğer şantiyenin kaydı yerelde değiştirilmişse (kirli) ona dokunulmaz; kirlilik bayrakları hiç değişmez.
+  if (rec && isAttDirty(rec)) return;
+  if (JSON.stringify(att) !== JSON.stringify((rec && rec.attendance) || {})) {
+    await dbPut('days', rec ? { ...rec, attendance: att } : { key: k, site: o, date, attendance: att, note: '', updatedAt: 0, synced: true });
+  }
+  if (state.site !== site || state.date !== date || !state.day) return;
+  if (JSON.stringify(att) !== JSON.stringify(state.otherAtt || {})) { state.otherAtt = att; renderChips(); }
+}
 async function loadDay() {
+  await loadOther();
   const rec = await dbGet('days', dayKey(state.site, state.date));
   state.day = rec || { key: dayKey(state.site, state.date), site: state.site, date: state.date, attendance: {}, note: '', updatedAt: 0, synced: true };
   await loadNames();
@@ -275,6 +307,10 @@ function chipBtn(name, v) {
   b.className = 'chip' + (v === 1 ? ' full' : v === 0.5 ? ' half' : '');
   b.dataset.name = name;
   b.append(document.createTextNode(name));
+  if (state.day && isBlocked(name)) {
+    b.classList.add('blocked'); b.setAttribute('aria-disabled', 'true');
+    const c = document.createElement('em'); c.className = 'oth'; c.textContent = LOC[otherSite()]; b.appendChild(c);
+  }
   if (v) { const s = document.createElement('small'); s.textContent = v === 1 ? 'Tam' : 'Yarım'; b.appendChild(s); }
   return b;
 }
@@ -466,8 +502,13 @@ $('chips').addEventListener('pointerdown', (e) => {
   press.timer = setTimeout(async () => {
     press.timer = null; press.suppress = true; pressEnd();
     try { navigator.vibrate?.(15); } catch { /* yoksay */ }
+    swipe.cancel = true;
     const att = state.day.attendance;
-    att[n] = att[n] === 0.5 ? 1 : 0.5;
+    if (isBlocked(n)) return toast(`${n} ${dayWord()} ${LOC[otherSite()]} tam gün çalıştı.`);
+    const want = att[n] === 0.5 ? 1 : 0.5, got = limitedTarget(n, want);
+    if (got === att[n]) return toast('Diğer şantiyede yarım gün var; yarım gün işaretlendi.');
+    att[n] = got;
+    if (got < want) toast('Diğer şantiyede yarım gün var; yarım gün işaretlendi.');
     if (!patchChips([n])) renderChips(); await persistDay(state.day, { att: true });
   }, 450);
 });
@@ -482,13 +523,18 @@ $('chips').addEventListener('click', async (e) => {
   if (t.dataset.name) {
     if (press.suppress) { press.suppress = false; return; }
     const n = t.dataset.name, v = att[n];
-    if (!v) att[n] = 1; else delete att[n];
+    if (!v) {
+      if (isBlocked(n)) return toast(`${n} ${dayWord()} ${LOC[otherSite()]} tam gün çalıştı.`);
+      att[n] = limitedTarget(n, 1);
+      if (att[n] < 1) toast('Diğer şantiyede yarım gün var; yarım gün işaretlendi.');
+    } else delete att[n];
     if (!patchChips([n])) renderChips(); await persistDay(state.day, { att: true });
   } else if (t.dataset.all) {
     const mem = state.members.filter((m) => m.teamId === t.dataset.all);
-    if (!mem.length || mem.every((m) => att[m.name] === 1)) return;
-    const changed = mem.filter((m) => att[m.name] !== 1).map((m) => m.name);
-    for (const m of mem) att[m.name] = 1;
+    const todo = mem.map((m) => [m.name, limitedTarget(m.name, 1)]).filter(([n, tg]) => tg > 0 && (att[n] || 0) < tg);
+    if (!todo.length) return;
+    const changed = todo.map(([n]) => n);
+    for (const [n, tg] of todo) att[n] = tg;
     if (!patchChips(changed, true)) renderChips(); await persistDay(state.day, { att: true });
   }
 });
@@ -840,16 +886,45 @@ async function exportExcel() {
 }
 $('xlGo').addEventListener('click', exportExcel);
 $('copyYesterday').addEventListener('click', async () => {
-  const prev = await dbGet('days', dayKey(state.site, shiftDate(state.date, -1)));
-  if (!prev || !Object.keys(prev.attendance || {}).length) return toast('Dünkü liste bulunamadı.');
-  if (Object.keys(state.day.attendance).length && !confirm('Bugünkü işaretlerin üzerine yazılsın mı?')) return;
-  state.day.attendance = { ...prev.attendance };
-  let added = false;
-  for (const n of Object.keys(prev.attendance)) if (!hasName(n)) { state.members.push({ name: n, teamId: ensureEkipsiz().id }); added = true; }
+  let prev = null;
+  for (let d = 1; d <= 7 && !prev; d++) {
+    const r = await dbGet('days', dayKey(state.site, shiftDate(state.date, -d)));
+    if (r && Object.values(r.attendance || {}).some((v) => v > 0)) prev = r;
+  }
+  if (!prev) return toast('Son 7 günde kayıt yok.');
+  const att = state.day.attendance;
+  let added = false, count = 0;
+  for (const [n, v] of Object.entries(prev.attendance)) {
+    if (!(v > 0) || att[n] > 0) continue; // bugün işaretli olanlar değişmez
+    const t = limitedTarget(n, v); if (t <= 0) continue;
+    att[n] = t; count++;
+    if (!hasName(n)) { state.members.push({ name: n, teamId: ensureEkipsiz().id }); added = true; }
+  }
   if (added) await persistRoster();
-  renderChips(); await persistDay(state.day, { att: true });
-  toast('Dünkü liste kopyalandı.');
+  renderChips();
+  if (count) await persistDay(state.day, { att: true });
+  toast(`${count} kişi işaretlendi.`);
 });
+
+// ---------- Kaydırarak gün değiştirme ----------
+const swipe = { x: 0, y: 0, on: false, cancel: false, busy: false };
+{
+  const sc = $('scroller');
+  sc.addEventListener('touchstart', (e) => {
+    swipe.on = e.touches.length === 1 && !e.target.closest('input,textarea,select,[contenteditable],label.datelabel') && !!state.site;
+    swipe.cancel = false; swipe.x = e.touches[0].clientX; swipe.y = e.touches[0].clientY;
+  }, { passive: true });
+  sc.addEventListener('touchmove', (e) => { if (e.touches.length > 1) swipe.on = false; }, { passive: true });
+  sc.addEventListener('touchend', async (e) => {
+    if (!swipe.on) return; swipe.on = false;
+    if (swipe.cancel || press.timer || swipe.busy) return;
+    const t = e.changedTouches[0], dx = t.clientX - swipe.x, dy = t.clientY - swipe.y;
+    if (Math.abs(dx) < 60 || Math.abs(dx) <= 1.5 * Math.abs(dy)) return;
+    swipe.busy = true;
+    try { await setDate(shiftDate(state.date, dx < 0 ? 1 : -1)); } finally { swipe.busy = false; }
+  }, { passive: true });
+  sc.addEventListener('touchcancel', () => { swipe.on = false; }, { passive: true });
+}
 
 // ---------- Not (otomatik kayıt) ----------
 let noteTimer, noteDirty = false;
@@ -1242,6 +1317,7 @@ async function pullRoster() {
 async function pullDay() {
   const site = state.site, date = state.date;
   if (!site || !canPull()) return;
+  pullOther();
   let data;
   try { data = await post({ action: 'getDay', site, date }); } catch { return; }
   if (!data || state.site !== site || state.date !== date || !state.day) return;

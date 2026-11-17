@@ -668,6 +668,95 @@ await p3.click('#btnSettings');
 check((await p3.inputValue('#setUrl')) === 'https://example.test/exec' && (await p3.inputValue('#setKey')) === 'abc123', 'localStorage silinince IndexedDB den geri yüklendi');
 await ctx3.close();
 
+// ---- 2.8: aynı gün kuralı, kaydırma kabı, Dünküyle aynı, kaydırarak gün değiştirme ----
+{
+  const ctx6 = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const p6 = await ctx6.newPage();
+  const errs6 = [];
+  p6.on('pageerror', (e) => errs6.push('pageerror: ' + e.message));
+  await p6.goto(base + 'manifest.webmanifest');
+  const iso6 = (off) => p6.evaluate((o) => { const d = new Date(); d.setDate(d.getDate() + o); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }, off);
+  const [t6, d2] = [await iso6(0), await iso6(-2)];
+  await p6.evaluate(([t, d2]) => new Promise((res, rej) => {
+    const r = indexedDB.open('santiye-defteri', 1);
+    r.onupgradeneeded = () => {
+      const db = r.result;
+      db.createObjectStore('days', { keyPath: 'key' }); db.createObjectStore('names', { keyPath: 'site' });
+      const p = db.createObjectStore('photos', { keyPath: 'id', autoIncrement: true });
+      p.createIndex('siteDate', ['site', 'date']); p.createIndex('status', 'status');
+      db.createObjectStore('queue', { keyPath: 'id' });
+    };
+    r.onsuccess = () => {
+      const tx = r.result.transaction(['names', 'days'], 'readwrite');
+      tx.objectStore('names').put({ site: 'gundogdu', teams: [{ id: 'a1', name: 'Ekip', hidden: false }], members: ['Raskon', 'Yarim', 'Bos', 'Dun'].map((name) => ({ name, teamId: 'a1' })) });
+      tx.objectStore('days').put({ key: 'koseilyas|' + t, site: 'koseilyas', date: t, attendance: { Raskon: 1, Yarim: 0.5 }, note: '', updatedAt: 1, synced: true });
+      tx.objectStore('days').put({ key: 'gundogdu|' + d2, site: 'gundogdu', date: d2, attendance: { Bos: 1, Raskon: 1, Yarim: 1, Dun: 0.5 }, note: '', updatedAt: 1, synced: true });
+      tx.oncomplete = () => res(); tx.onerror = () => rej(tx.error);
+    };
+    localStorage.setItem('sd_site', JSON.stringify('gundogdu'));
+  }), [t6, d2]);
+  await p6.goto(base + 'index.html');
+  await p6.waitForSelector('#chips .chip[data-name="Raskon"]');
+  const chip6 = (n) => p6.locator(`#chips .chip[data-name="${n}"]`);
+  const toast6 = async () => (await p6.textContent('#toast')) || '';
+  check(await chip6('Raskon').evaluate((b) => b.classList.contains('blocked') && b.getAttribute('aria-disabled') === 'true') && /Köseilyas'ta/.test(await chip6('Raskon').textContent()), '2.8: diğer şantiyede tam gün: isim kapalı ve altında şantiye adı');
+  await chip6('Raskon').click({ force: true });
+  check(/Raskon bugün Köseilyas'ta tam gün çalıştı\./.test(await toast6()) && (await p6.locator('#chips .chip.full, #chips .chip.half').count()) === 0, '2.8: kapalı isme dokununca bildirim, işaret yok');
+  await p6.locator('button[data-all]').click();
+  check((await chip6('Yarim').evaluate((b) => b.classList.contains('half'))) && (await chip6('Bos').evaluate((b) => b.classList.contains('full'))) && (await chip6('Dun').evaluate((b) => b.classList.contains('full'))) && (await chip6('Raskon').evaluate((b) => !b.classList.contains('full') && !b.classList.contains('half'))), '2.8: Hepsi geldi kapalıyı atlar, kalan yarımsa yarım yazar');
+  await chip6('Bos').click(); await chip6('Dun').click();
+  check((await p6.locator('#chips .chip.full').count()) === 0, '2.8: işaret kaldırma çalışıyor');
+  await chip6('Yarim').click(); // işaretliyi kaldır
+  await chip6('Yarim').click(); // yeniden: kalan 0,5 => yarım
+  check((await chip6('Yarim').evaluate((b) => b.classList.contains('half'))) && /yarım gün işaretlendi/.test(await toast6()), '2.8: diğer şantiyede yarım varsa dokunma yarım yazar + bildirim');
+  const lp6 = async (n) => { const b = await chip6(n).boundingBox(); await p6.mouse.move(b.x + b.width / 2, b.y + b.height / 2); await p6.mouse.down(); await p6.waitForTimeout(600); await p6.mouse.up(); await p6.waitForTimeout(100); };
+  await lp6('Yarim');
+  check(await chip6('Yarim').evaluate((b) => b.classList.contains('half') && !b.classList.contains('full')), '2.8: uzun basış da en fazla yarım');
+  await p6.click('#copyYesterday');
+  await p6.waitForFunction(() => /kişi işaretlendi/.test(document.getElementById('toast').textContent), null, { timeout: 3000 }).catch(() => {});
+  check(/^2 kişi işaretlendi\.$/.test((await toast6()).trim()), '2.8: Dünküyle aynı (2 gün öncesinden): ' + (await toast6()));
+  check((await chip6('Bos').evaluate((b) => b.classList.contains('full'))) && (await chip6('Dun').evaluate((b) => b.classList.contains('half'))) && (await chip6('Yarim').evaluate((b) => b.classList.contains('half'))) && (await chip6('Raskon').evaluate((b) => b.classList.contains('blocked'))), '2.8: Dünküyle aynı: değerler geldi, kural uygulandı, işaretli olan değişmedi');
+  // kaydırma kabı
+  const sc = await p6.evaluate(() => {
+    const s = document.getElementById('scroller');
+    if (s.scrollHeight <= s.clientHeight + 100) { const d = document.createElement('div'); d.style.height = '1500px'; document.querySelector('main').appendChild(d); }
+    s.scrollTop = 300;
+    return { st: s.scrollTop, doc: document.scrollingElement.scrollTop };
+  });
+  check(sc.st > 0 && sc.doc === 0, '2.8: #scroller kayar, belge kaymaz: ' + JSON.stringify(sc));
+  await p6.evaluate(() => { document.getElementById('scroller').scrollTop = 0; });
+  // kaydırarak gün değiştirme
+  const cdp = await ctx6.newCDPSession(p6);
+  const swipeTo = async (x1, y1, x2, y2) => {
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: x1, y: y1 }] });
+    for (let i = 1; i <= 6; i++) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: x1 + (x2 - x1) * i / 6, y: y1 + (y2 - y1) * i / 6 }] });
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  };
+  const sb = await p6.locator('#summary').boundingBox();
+  const sy = sb.y + sb.height / 2;
+  const dateVal = () => p6.inputValue('#dateInput');
+  const t1 = await iso6(1);
+  await swipeTo(300, sy, 150, sy + 10);
+  await p6.waitForFunction((v) => document.getElementById('dateInput').value === v, t1, { timeout: 3000 }).catch(() => {});
+  check((await dateVal()) === t1, '2.8: sola kaydırma = ertesi gün');
+  await p6.waitForTimeout(400);
+  await swipeTo(100, sy, 260, sy + 10);
+  await p6.waitForFunction((v) => document.getElementById('dateInput').value === v, t6, { timeout: 3000 }).catch(() => {});
+  check((await dateVal()) === t6, '2.8: sağa kaydırma = önceki gün');
+  await p6.waitForTimeout(400);
+  await swipeTo(200, sy + 120, 215, sy - 100);
+  await p6.waitForTimeout(500);
+  check((await dateVal()) === t6, '2.8: dikey kaydırma günü değiştirmez');
+  await p6.fill('#dateInput', '2020-01-01');
+  await p6.waitForFunction(() => document.getElementById('dateInput').value === '2020-01-01');
+  await p6.waitForTimeout(300);
+  await p6.click('#copyYesterday');
+  await p6.waitForFunction(() => /Son 7/.test(document.getElementById('toast').textContent), null, { timeout: 3000 }).catch(() => {});
+  check(/Son 7 günde kayıt yok\./.test(await toast6()), '2.8: kayıt yoksa bildirim: ' + (await toast6()));
+  check(errs6.length === 0, '2.8: sayfa hatası yok ' + errs6.join('|'));
+  await ctx6.close();
+}
+
 // Ayar yoksa Türkçe uyarı
 await page.unroute(GAS);
 await page.evaluate(() => localStorage.setItem('sd_settings', '{}'));

@@ -1,5 +1,6 @@
 // Sürüm notları — her güncellemede en üste yeni satır eklenir.
 export const SURUMLER = [
+  { v: '2.8', t: '18.11.2026', n: ['Aynı kişi aynı gün iki şantiyede toplam 1 günü geçemez: başka şantiyede tam gün varsa isim kapalı görünür, yarım gün varsa yarım gün işaretlenir.', 'Dünküyle aynı: son 7 günün en yakın kaydını bugüne işler; bugün işaretlenenler değişmez.', 'Ekranı sağa/sola kaydırarak gün değiştirilir.', 'Üst durum çubuğundaki beyaz bulanıklık giderildi (sayfa değil, içerik kayar).'] },
   { v: '2.7', t: '18.11.2026', n: ['Akıcılık: yumuşak animasyonlar (isim dokunma, sekme ve gün geçişi, Ayarlar açılışı, bildirimler, fotoğraflar).', 'Kaydırmayı yavaşlatan bulanıklık efektleri kaldırıldı; animasyonlar ekran kartında çalışır (120 Hz hedefli).'] },
   { v: '2.6', t: '18.11.2026', n: ['Ayarlar > Excel indir: aylık puantaj, şablonla aynı düzen ve renklerde .xlsx.'] },
   { v: '2.5.1', t: '18.11.2026', n: ['Ayarlar > Ekipler: kişi adı ✏️ ile düzeltilebilir (puantaj kayıtları da yeni adla gider).', 'Ekip düğmeleriyle ve isim aramasıyla liste süzülür.', 'Kişi satırları daha derli toplu.'] },
