@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Şantiye Defteri</title>
+<meta name="theme-color" content="#1f2937">
+<meta name="color-scheme" content="light dark">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Şantiye Defteri">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top">
+  <div class="tabs" id="siteTabs" role="tablist">
+    <button type="button" data-site="gundogdu" role="tab">Gündoğdu</button>
+    <button type="button" data-site="koseilyas" role="tab">Köseilyas</button>
+  </div>
+  <button type="button" id="btnSettings" class="icon-btn" aria-label="Ayarlar">⚙</button>
+</header>
+
+<main>
+  <div class="datebar">
+    <button type="button" id="prevDay" class="icon-btn" aria-label="Önceki gün">‹</button>
+    <label class="datelabel">
+      <span id="dateText"></span>
+      <input type="date" id="dateInput" aria-label="Tarih seç">
+    </label>
+    <button type="button" id="nextDay" class="icon-btn" aria-label="Sonraki gün">›</button>
+  </div>
+
+  <div id="syncBar" class="syncbar">
+    <div class="sync-row">
+      <span id="syncText"><b id="pendingCount">0</b> öğe gönderilmeyi bekliyor</span>
+      <button type="button" id="syncNow" class="btn small">Şimdi gönder</button>
+    </div>
+    <div id="syncError" class="sync-error" hidden></div>
+  </div>
+
+  <section class="card">
+    <div class="card-head">
+      <h2>Puantaj</h2>
+      <button type="button" id="editNames" class="btn small ghost">Düzenle</button>
+    </div>
+    <div id="summary" class="summary"></div>
+    <div id="chips" class="chips"></div>
+    <div class="row">
+      <button type="button" id="copyYesterday" class="btn ghost">Dünkü listeyi kopyala</button>
+    </div>
+    <form id="addForm" class="addform" autocomplete="off">
+      <input type="text" id="newName" placeholder="Yeni isim" aria-label="Yeni isim" autocapitalize="words">
+      <button type="submit" id="addName" class="btn">+ Yeni isim</button>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2>Notlar</h2>
+    <textarea id="note" rows="5" placeholder="Bugünün notları…"></textarea>
+    <div id="noteState" class="hint"></div>
+  </section>
+
+  <section class="card">
+    <h2>Fotoğraflar</h2>
+    <div class="row two">
+      <label class="btn filebtn">Fotoğraf çek<input type="file" id="camInput" accept="image/*" capture="environment"></label>
+      <label class="btn filebtn ghost">Galeriden seç<input type="file" id="galInput" accept="image/*" multiple></label>
+    </div>
+    <div id="photoMsg" class="hint"></div>
+    <div id="photoGrid" class="photo-grid"></div>
+  </section>
+</main>
+
+<div id="picker" class="overlay" hidden>
+  <div class="sheet">
+    <h1>Şantiye Defteri</h1>
+    <p>Hangi şantiyedesiniz?</p>
+    <button type="button" class="big" data-site="gundogdu">Gündoğdu</button>
+    <button type="button" class="big" data-site="koseilyas">Köseilyas</button>
+  </div>
+</div>
+
+<div id="settings" class="overlay" hidden>
+  <div class="sheet scroll">
+    <div class="card-head"><h1>Ayarlar</h1><button type="button" id="closeSettings" class="btn small ghost">Kapat</button></div>
+    <label class="field">Apps Script adresi
+      <input type="url" id="setUrl" placeholder="https://script.google.com/macros/s/…/exec" autocapitalize="off" autocorrect="off" spellcheck="false">
+    </label>
+    <label class="field">Gizli anahtar
+      <input type="text" id="setKey" placeholder="kurulum() ile oluşan anahtar" autocapitalize="off" autocorrect="off" spellcheck="false">
+    </label>
+    <div class="row two">
+      <button type="button" id="saveSettings" class="btn">Kaydet</button>
+      <button type="button" id="testConn" class="btn ghost">Bağlantıyı test et</button>
+    </div>
+    <div id="testResult" class="hint"></div>
+    <h2>Şantiye konumları</h2>
+    <p class="hint">Şantiyedeyken düğmeye basın. Sonra uygulama açılınca 300 m içindeki şantiyeyi kendisi seçer.</p>
+    <button type="button" class="btn ghost block" data-save-loc="gundogdu">Burayı Gündoğdu olarak kaydet</button>
+    <div id="loc-gundogdu" class="hint"></div>
+    <button type="button" class="btn ghost block" data-save-loc="koseilyas">Burayı Köseilyas olarak kaydet</button>
+    <div id="loc-koseilyas" class="hint"></div>
+  </div>
+</div>
+
+<div id="toast" class="toast" role="status" hidden></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>
