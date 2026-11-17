@@ -1,5 +1,6 @@
 // Sürüm notları — her güncellemede en üste yeni satır eklenir.
 export const SURUMLER = [
+  { v: '2.4', t: '18.11.2026', n: ['Ayarlar > Kayıt defteri: Drive ile yapılan her işlem (başarılı/hata) kaydedilir; "Kopyala" ile paylaşılabilir. Anahtar ve fotoğraf içeriği yazılmaz.'] },
   { v: '2.3', t: '18.11.2026', n: ['Gereksiz bilgi kutusu gizlenir; Apps Script uyarısı artık sadece Ayarlar\'da görünür.', '"Bağlantıyı test et" artık Apps Script\'in güncel mi eski mi olduğunu da söyler.'] },
   { v: '2.2', t: '18.11.2026', n: ['Başlık çubuğu ve alt sekmelerdeki beyaz parlama efekti en aza indirildi.'] },
   { v: '2.1', t: '18.11.2026', n: ['Tasarım: Windows XP ve Windows 7 karışımı (cam başlık ve alt sekmeler, parlak düğmeler).', 'Ekip başlığı kartın iki kenarına kadar uzanır, ekip adı tam ortada.'] },

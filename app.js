@@ -680,7 +680,35 @@ async function refreshBanner() {
   const e = $('syncError'); e.hidden = !showErr; e.textContent = showErr ? lastError : '';
 }
 function setError(msg) { lastError = msg || ''; }
+// ---------- Kayıt defteri (log): son 300 olay, anahtar ve fotoğraf içeriği yazılmaz ----------
+function logEv(msg) {
+  try {
+    const arr = JSON.parse(localStorage.getItem('sd_log') || '[]');
+    const t = new Date(); const ts = `${pad(t.getDate())}.${pad(t.getMonth() + 1)} ${pad(t.getHours())}:${pad(t.getMinutes())}:${pad(t.getSeconds())}`;
+    arr.push(ts + ' ' + msg); while (arr.length > 300) arr.shift();
+    localStorage.setItem('sd_log', JSON.stringify(arr));
+  } catch { /* yoksay */ }
+}
+function logSummary(p) {
+  const x = [p.action]; if (p.site) x.push(p.site); if (p.date) x.push(p.date);
+  if (p.attendance) x.push('puantaj:' + Object.keys(p.attendance).length + ' kişi');
+  if (p.note !== undefined) x.push('not');
+  if (p.teams) x.push('ekip:' + p.teams.length + ' / kişi:' + p.teams.reduce((n, t) => n + (t.members || []).length, 0));
+  if (p.name) x.push(p.name);
+  return x.join(' ');
+}
 async function post(payload) {
+  const t0 = Date.now(), sum = logSummary(payload);
+  try {
+    const r = await postRaw(payload);
+    let extra = '';
+    if (r && Array.isArray(r.teams)) extra = ' → ekip:' + r.teams.length + ' kişi:' + r.teams.reduce((n, t) => n + (t.members || []).length, 0);
+    if (r && r.attendance) extra = ' → puantaj:' + Object.keys(r.attendance).length;
+    logEv(`OK ${sum} (${Date.now() - t0} ms)${extra}`);
+    return r;
+  } catch (e) { logEv(`HATA ${sum}: ${e && e.message}`); throw e; }
+}
+async function postRaw(payload) {
   const { url, key } = getSettings();
   const ctl = new AbortController(); const timer = setTimeout(() => ctl.abort(), 90000);
   let res;
@@ -891,7 +919,19 @@ $('forceUpdate')?.addEventListener('click', async () => {
   location.reload();
 });
 try { const e = $('surumEtiket'); if (e) e.textContent = `Sürüm ${SURUMLER[0].v}`; } catch { /* yoksay */ }
+function renderLog() {
+  const box = $('logBox'); if (!box) return;
+  let arr = []; try { arr = JSON.parse(localStorage.getItem('sd_log') || '[]'); } catch { /* yoksay */ }
+  box.value = [`Sürüm ${SURUMLER[0].v} · ${navigator.userAgent}`, ...arr.slice().reverse()].join('\n');
+}
+$('logCopy')?.addEventListener('click', async () => {
+  renderLog(); const box = $('logBox');
+  try { await navigator.clipboard.writeText(box.value); toast('Kayıt kopyalandı.'); }
+  catch { box.focus(); box.select(); toast('Seçildi; Kopyala deyin.'); }
+});
+$('logClear')?.addEventListener('click', () => { try { localStorage.removeItem('sd_log'); } catch { /* yoksay */ } renderLog(); toast('Kayıt temizlendi.'); });
 function openSettings() {
+  renderLog();
   renderSurum();
   const s = getSettings(); $('setUrl').value = s.url; $('setKey').value = s.key;
   $('testResult').textContent = ''; ui.hideTeam = null; ui.delName = null; renderTeamSettings(); renderLocInfo(); $('settings').hidden = false;
@@ -956,6 +996,7 @@ async function init() {
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       if (!hadController || reloaded) return; reloaded = true; location.reload();
     });
+    logEv('Uygulama açıldı, sürüm ' + SURUMLER[0].v + (navigator.onLine ? '' : ' (internet yok)'));
     navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).then((reg) => {
       const check = () => { try { reg.update(); } catch { /* yoksay */ } };
       document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') check(); });
