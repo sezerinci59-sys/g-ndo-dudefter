@@ -1,5 +1,6 @@
 // Sürüm notları — her güncellemede en üste yeni satır eklenir.
 export const SURUMLER = [
+  { v: '1.6', t: '17.11.2026', n: ['Fotoğraf çek artık uygulamanın kendi kamerasını açar: arka arkaya istediğiniz kadar çekin, her seferinde "Kullan" demek gerekmez. Bitince "Bitti"ye basın.', 'Fotoğrafların köşesindeki ✕ ile fotoğraf silinir (ikinci dokunuşta onaylanır). Gönderilmiş fotoğraf Drive\'dan da silinir; bunun için Apps Script\'in güncellenmesi gerekir (README\'ye bakın).'] },
   { v: '1.5', t: '17.11.2026', n: ['Ayarlar > Sürüm notları: "Güncellemeyi şimdi al" düğmesi.', 'Sayfanın en altında sürüm numarası görünür.'] },
   { v: '1.4', t: '17.11.2026', n: ['Ayarlar\'a "Sürüm notları" bölümü eklendi.', 'Güncellenince ekranda kısa bir "Güncellendi" bildirimi çıkar.'] },
   { v: '1.3', t: '17.11.2026', n: ['Uygulama yeni sürümü kendiliğinden alır; elle yenileme gerekmez.', 'İnternet yokken telefondaki son sürümle açılır.'] },

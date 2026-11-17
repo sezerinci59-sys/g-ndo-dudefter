@@ -87,7 +87,8 @@ function handle_(req) {
     case 'saveDay': return saveDay_(req);
     case 'uploadPhoto': return uploadPhoto_(req);
     case 'getDay': return getDay_(req);
-    default: throw new Error('Bilinmeyen işlem: ' + req.action);
+    case 'deletePhoto': return deletePhoto_(req);
+    default: return { ok: false, error: 'unknown action: ' + req.action };
   }
 }
 
@@ -295,4 +296,30 @@ function uploadPhoto_(req) {
   var blob = Utilities.newBlob(bytes, 'image/jpeg', fname);
   var file = folder.createFile(blob);
   return { ok: true, fileId: file.getId() };
+}
+
+/**
+ * Fotoğrafı çöp kutusuna taşır. Yalnızca iki şantiye fotoğraf klasörünün
+ * (tarih klasörü > şantiye klasörü) altındaki dosyalara dokunur.
+ * Dosya yoksa ya da zaten çöpteyse başarılı sayılır (tekrar denemeye dayanıklı).
+ */
+function deletePhoto_(req) {
+  var id = String(req.fileId || '');
+  if (!id) return { ok: false, error: 'fileId boş.' };
+  var file;
+  try { file = DriveApp.getFileById(id); } catch (e) { return { ok: true, notFound: true }; }
+  if (file.isTrashed()) return { ok: true, alreadyTrashed: true };
+  var allowed = {};
+  Object.keys(SITES).forEach(function (s) { allowed[SITES[s].photoFolderId] = true; });
+  var inside = false;
+  var p1 = file.getParents();
+  while (p1.hasNext() && !inside) {
+    var dateFolder = p1.next();
+    if (allowed[dateFolder.getId()]) { inside = true; break; }
+    var p2 = dateFolder.getParents();
+    while (p2.hasNext()) { if (allowed[p2.next().getId()]) { inside = true; break; } }
+  }
+  if (!inside) return { ok: false, error: 'Dosya şantiye fotoğraf klasörlerinde değil, silinmedi.' };
+  file.setTrashed(true);
+  return { ok: true };
 }

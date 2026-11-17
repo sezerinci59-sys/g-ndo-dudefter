@@ -47,7 +47,7 @@ Bu klasördeki dosyalar (`index.html`, `app.css`, `app.js`, `sw.js`, `manifest.w
 - **+ Yeni isim** ile kalıcı isim ekleyin. **Düzenle** ile isim değiştirin veya silin.
 - **Dünkü listeyi kopyala** ile önceki günün işaretlerini getirin.
 - Notları yazın, kendiliğinden kaydedilir.
-- **Fotoğraf çek** veya **Galeriden seç**. Fotoğraflar küçültülür, "Bekliyor" yazar, gönderilince "Gönderildi" olur.
+- **Fotoğraf çek** uygulamanın kendi kamerasını açar; arka arkaya çekin, bitince **Bitti**. Fotoğrafın köşesindeki **✕**'e iki kez dokunarak silin. Veya **Galeriden seç**. Fotoğraflar küçültülür, "Bekliyor" yazar, gönderilince "Gönderildi" olur.
 - Üstteki sarı/kırmızı çerçeve takılı kalmışsa **Şimdi gönder**'e basın. Hata yazısını okuyun (adres/anahtar eksik, internet yok vb.).
 
 ## Dosyalar
@@ -58,6 +58,16 @@ Bu klasördeki dosyalar (`index.html`, `app.css`, `app.js`, `sw.js`, `manifest.w
 | `sw.js`, `manifest.webmanifest`, `icons/` | Çevrimdışı çalışma ve ana ekran simgesi |
 | `apps-script/Code.gs` | Google'da çalışan, Drive ve E-Tablo'ya yazan kısım |
 | `test/smoke.mjs` | Geliştirici için otomatik deneme (`node test/smoke.mjs`) |
+
+## Apps Script'i güncelleme
+
+Uygulamaya yeni bir özellik (ör. fotoğrafı Drive'dan silme) eklenince `Code.gs` de değişir. Güncellemek için:
+
+1. script.google.com adresinde projenizi açın.
+2. Sol taraftaki `Code.gs` içindeki her şeyi silin, yerine `https://raw.githubusercontent.com/sezerinci59-sys/g-ndo-dudefter/main/apps-script/Code.gs` adresindeki yeni kodu yapıştırın. **Kaydet**'e basın.
+3. **Dağıt → Dağıtımları yönet → ✎ (kalem) → Sürüm: Yeni sürüm → Dağıt**.
+
+Web uygulaması adresi değişmez, kurulumu tekrar yapmanız gerekmez.
 
 ## Bilinmesi gerekenler
 

@@ -29,19 +29,22 @@ let failed = 0;
 const check = (ok, msg) => { console.log((ok ? 'GEÇTİ  ' : 'KALDI  ') + msg); if (!ok) failed++; };
 
 const GAS = 'https://script.google.com/macros/s/TEST/exec';
-const browser = await chromium.launch();
-const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+const browser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] });
+const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, permissions: ['camera'] });
 const page = await ctx.newPage();
 const errors = [];
 page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
 
 const received = [];
+let mockMode = 'ok', deleteReply = null, fileSeq = 0;
 await page.route(GAS, async (route) => {
+  if (mockMode === 'offline') return route.abort('failed');
   const body = JSON.parse(route.request().postData() || '{}');
   received.push({ body, ct: route.request().headers()['content-type'] });
+  const reply = body.action === 'deletePhoto' && deleteReply ? deleteReply : { ok: true, fileId: 'F' + (++fileSeq) };
   await route.fulfill({ status: 200, contentType: 'application/json',
-    headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify({ ok: true, fileId: 'F1' }) });
+    headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(reply) });
 });
 
 await page.addInitScript(([url]) => {
@@ -180,6 +183,129 @@ await tset('Beton').locator('button[data-delyes="Deniz"]').click();
 await page.click('#closeSettings');
 check((await page.locator('#chips .chip[data-name="Deniz"]').count()) === 1, 'silinen ismin bugünkü kaydı "Listede olmayanlar"da görünür (veri kaybı yok)');
 check(errors.length === 0, 'ekip akışında konsol hatası yok' + (errors.length ? ': ' + errors.join(' | ') : ''));
+
+// ---- Fotoğraf silme ----
+const jpegB64 = await page.evaluate(() => {
+  const c = document.createElement('canvas'); c.width = 600; c.height = 400;
+  const g = c.getContext('2d'); g.fillStyle = '#c84'; g.fillRect(0, 0, 600, 400); return c.toDataURL('image/jpeg', 0.9).split(',')[1];
+});
+const jpegFile = { name: 'a.jpg', mimeType: 'image/jpeg', buffer: Buffer.from(jpegB64, 'base64') };
+const idbPhotos = () => page.evaluate(() => new Promise((res) => {
+  const r = indexedDB.open('santiye-defteri'); r.onsuccess = () => {
+    const q = r.result.transaction('photos').objectStore('photos').getAll();
+    q.onsuccess = () => res(q.result.map((p) => ({ id: p.id, status: p.status, fileId: p.fileId, deleted: !!p.deleted })));
+  };
+}));
+const idbQueue = () => page.evaluate(() => new Promise((res) => {
+  const r = indexedDB.open('santiye-defteri'); r.onsuccess = () => {
+    const q = r.result.transaction('queue').objectStore('queue').getAll();
+    q.onsuccess = () => res(q.result);
+  };
+}));
+const waitUntil = async (fn, ms = 15000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await fn()) return true; await page.waitForTimeout(100); } return false; };
+const settle = () => page.waitForFunction(() => document.getElementById('pendingCount').textContent === '0', null, { timeout: 15000 });
+const upCount = () => received.filter((r) => r.body.action === 'uploadPhoto').length;
+
+mockMode = 'offline';
+errors.length = 0; // (çevrimdışı taklidi tarayıcı konsoluna ağ hatası yazar)
+const upBefore = upCount();
+await page.setInputFiles('#galInput', jpegFile);
+await page.waitForSelector('#photoGrid .photo.pending');
+const delBtn = page.locator('#photoGrid .photo.pending .pdel');
+const dbb = await delBtn.boundingBox();
+check(dbb.width >= 44 && dbb.height >= 44, 'silme düğmesi >=44px: ' + dbb.width + 'x' + dbb.height);
+await delBtn.click();
+await page.waitForSelector('#photoGrid .pdel.armed');
+check((await delBtn.textContent()).trim() === 'Sil?', 'ilk dokunuş: Sil? onayı');
+check((await page.locator('#photoGrid .photo.pending').count()) === 1, 'ilk dokunuşta fotoğraf silinmedi');
+await page.waitForTimeout(4400);
+check((await page.locator('#photoGrid .photo.pending .pdel').textContent()).trim() === '✕', '4 sn sonra onay kendiliğinden ✕ a döndü');
+await page.locator('#photoGrid .photo.pending .pdel').click();
+await page.waitForSelector('#photoGrid .pdel.armed');
+await page.locator('#photoGrid .photo.pending .pdel').click();
+await waitUntil(async () => (await page.locator('#photoGrid .photo.pending').count()) === 0, 3000);
+check((await page.locator('#photoGrid .photo.pending').count()) === 0, 'bekleyen fotoğraf iki dokunuşla arayüzden kalktı');
+check((await idbPhotos()).every((p) => p.status !== 'pending'), 'bekleyen fotoğraf IndexedDB den silindi');
+await page.click('#syncNow');
+await page.waitForFunction(() => !document.getElementById('syncError').hidden, null, { timeout: 15000 });
+errors.length = 0;
+mockMode = 'ok';
+await page.click('#syncNow'); await settle();
+check(upCount() === upBefore, 'silinen bekleyen fotoğraf için yükleme gönderilmedi');
+
+// yüklenmiş fotoğraf: deletePhoto kuyruğa girer ve gider
+const sentPhoto = (await idbPhotos()).find((p) => p.status === 'sent');
+check(!!(sentPhoto && sentPhoto.fileId), 'yüklenmiş fotoğraf fileId taşıyor: ' + (sentPhoto && sentPhoto.fileId));
+await page.locator('#photoGrid .photo.sent .pdel').click();
+await page.waitForSelector('#photoGrid .pdel.armed');
+await page.locator('#photoGrid .photo.sent .pdel').click();
+await waitUntil(async () => (await page.locator('#photoGrid .photo').count()) === 0, 3000);
+check((await page.locator('#photoGrid .photo').count()) === 0, 'yüklenmiş fotoğraf arayüzden gizlendi');
+await waitUntil(() => received.some((r) => r.body.action === 'deletePhoto'));
+const dp = received.filter((r) => r.body.action === 'deletePhoto');
+check(dp.length >= 1 && dp[0].body.fileId === sentPhoto.fileId, 'deletePhoto isteği fileId ile gitti: ' + (dp[0] && dp[0].body.fileId));
+await settle();
+check((await idbPhotos()).length === 0 && (await idbQueue()).length === 0, 'başarılı silmeden sonra kayıt ve kuyruk temiz');
+
+// eski Apps Script: bilinmeyen işlem
+await page.setInputFiles('#galInput', jpegFile);
+await page.click('#syncNow'); await settle();
+await page.waitForSelector('#photoGrid .photo.sent');
+deleteReply = { ok: false, error: 'unknown action: deletePhoto' };
+await page.locator('#photoGrid .photo.sent .pdel').click();
+await page.waitForSelector('#photoGrid .pdel.armed');
+await page.locator('#photoGrid .photo.sent .pdel').click();
+await page.waitForFunction(() => /Apps Script'i güncelleyin/.test(document.getElementById('syncError').textContent), null, { timeout: 15000 });
+check(true, 'bilinmeyen işlem iletisi: ' + (await page.textContent('#syncError')));
+check((await idbQueue()).some((q) => q.type === 'deletePhoto'), 'silme işlemi kuyrukta bekliyor');
+// diğer öğeler yine de gider
+const sdBefore = received.filter((r) => r.body.action === 'saveDay').length, upB2 = upCount();
+await page.setInputFiles('#galInput', jpegFile);
+await page.fill('#note', 'Silme takılıyken not.');
+await page.waitForFunction(() => document.getElementById('noteState').textContent === 'Kaydedildi');
+await page.click('#syncNow');
+await waitUntil(() => upCount() > upB2 && received.filter((r) => r.body.action === 'saveDay').length > sdBefore);
+check(upCount() > upB2, 'silme takılıyken yeni fotoğraf yine yüklendi');
+check(received.filter((r) => r.body.action === 'saveDay').length > sdBefore, 'silme takılıyken saveDay yine gönderildi');
+await waitUntil(async () => (await idbPhotos()).every((p) => p.status !== 'pending'));
+check((await page.textContent('#syncError')).includes("Apps Script'i güncelleyin"), 'mesaj duruyor');
+deleteReply = null;
+await page.click('#syncNow'); await settle();
+check((await idbQueue()).length === 0 && (await page.locator('#syncError').isHidden()), 'Apps Script güncelleniyor: silme tamamlandı, hata temizlendi');
+
+// ---- Uygulama içi kamera ----
+await page.evaluate(() => {
+  window.__streams = [];
+  const o = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+  navigator.mediaDevices.getUserMedia = async (c) => { const s = await o(c); window.__streams.push(s); return s; };
+});
+const upB3 = upCount();
+await page.click('#camBtn');
+await page.waitForSelector('#cam:not([hidden])');
+await page.waitForFunction(() => document.getElementById('camVideo').videoWidth > 0, null, { timeout: 10000 });
+const sb = await page.locator('#camShutter').boundingBox();
+check(sb.width >= 72 && sb.height >= 72, 'deklanşör >=72px: ' + sb.width);
+check(!(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)), 'kamera açıkken yatay kaydırma yok');
+for (let i = 0; i < 3; i++) await page.locator('#camShutter').click({ delay: 0 });
+await page.click('#camDone');
+check(await page.locator('#cam').isHidden(), 'Bitti kamerayı kapattı');
+const ended = await page.evaluate(() => window.__streams.length > 0 && window.__streams.every((s) => s.getTracks().every((t) => t.readyState === 'ended')));
+check(ended, 'kamera izleri durduruldu');
+await waitUntil(async () => (await idbPhotos()).filter((p) => p.status !== 'deleted').length >= 3);
+await page.click('#syncNow'); await settle();
+check(upCount() - upB3 === 3, '3 çekim yüklendi: ' + (upCount() - upB3));
+check((await page.locator('#photoGrid .photo.sent').count()) >= 3, 'çekilenler listede');
+// Yedek yol: getUserMedia reddedilirse yerel giriş
+await page.evaluate(() => { navigator.mediaDevices.getUserMedia = () => Promise.reject(Object.assign(new Error('x'), { name: 'NotAllowedError' })); });
+const upB4 = upCount();
+const [fc] = await Promise.all([page.waitForEvent('filechooser'), page.click('#camBtn')]);
+check(await page.locator('#cam').isHidden(), 'reddedilince tam ekran kamera açılmadı');
+check(/Kamera izni/.test(await page.textContent('#toast')), 'bildirim: ' + (await page.textContent('#toast')));
+await fc.setFiles(jpegFile);
+await waitUntil(() => page.locator('#photoGrid .photo.pending').count().then((n) => n > 0));
+await page.click('#syncNow'); await settle();
+check(upCount() - upB4 === 1, 'yedek yoldan çekilen fotoğraf yüklendi');
+check(errors.length === 0, 'silme/kamera akışında konsol hatası yok' + (errors.length ? ': ' + errors.join(' | ') : ''));
 
 // ---- Göç testi: eski biçim ----
 const ctx2 = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });

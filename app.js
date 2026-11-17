@@ -210,8 +210,10 @@ function renderNote() {
   const ta = $('note');
   if (document.activeElement !== ta) ta.value = state.day.note || '';
 }
+let armedPhoto = null, armTimer = null;
+function disarmPhoto() { clearTimeout(armTimer); armedPhoto = null; }
 async function renderPhotos() {
-  const list = await dbIndexAll('photos', 'siteDate', [state.site, state.date]);
+  const list = (await dbIndexAll('photos', 'siteDate', [state.site, state.date])).filter((p) => !p.deleted);
   photoUrls.forEach((u) => URL.revokeObjectURL(u)); photoUrls = [];
   const grid = $('photoGrid'); grid.textContent = '';
   for (const p of list) {
@@ -221,9 +223,33 @@ async function renderPhotos() {
     if (blob) { const u = URL.createObjectURL(blob); photoUrls.push(u); img.src = u; }
     img.alt = 'Fotoğraf';
     const s = document.createElement('span'); s.textContent = p.status === 'sent' ? 'Gönderildi' : 'Bekliyor';
-    div.append(img, s); grid.appendChild(div);
+    const d = document.createElement('button'); d.type = 'button'; d.dataset.pdel = String(p.id);
+    const armed = armedPhoto === p.id;
+    d.className = 'pdel' + (armed ? ' armed' : ''); d.textContent = armed ? 'Sil?' : '✕';
+    d.setAttribute('aria-label', armed ? 'Silmek için tekrar dokunun' : 'Fotoğrafı sil');
+    div.append(img, s, d); grid.appendChild(div);
   }
 }
+async function deletePhoto(id) {
+  const p = await dbGet('photos', id);
+  if (!p) return;
+  if (p.status === 'sent' && p.fileId) {
+    p.deleted = true; await dbPut('photos', p);
+    await dbPut('queue', { id: `del|${p.fileId}`, type: 'deletePhoto', fileId: p.fileId, photoId: id });
+  } else {
+    await dbDel('photos', id);
+    await dbDel('queue', `photo|${id}`).catch(() => {});
+  }
+  await renderPhotos(); refreshBanner(); scheduleSync();
+}
+$('photoGrid').addEventListener('click', async (e) => {
+  const b = e.target.closest('[data-pdel]'); if (!b) return;
+  const id = Number(b.dataset.pdel);
+  if (armedPhoto === id) { disarmPhoto(); await deletePhoto(id); return; }
+  disarmPhoto(); armedPhoto = id;
+  armTimer = setTimeout(() => { armedPhoto = null; renderPhotos(); }, 4000);
+  renderPhotos();
+});
 async function renderAll() {
   renderDate(); renderTabs();
   if (!state.site) return;
@@ -461,23 +487,25 @@ async function toJpeg(src, maxSide, quality) {
   ctx.drawImage(src, 0, 0, c.width, c.height);
   return new Promise((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('toBlob'))), 'image/jpeg', quality));
 }
+async function savePhoto(site, date, src) {
+  const blob = await toJpeg(src, 1920, 0.8);
+  const thumb = await toJpeg(src, 240, 0.7);
+  const n = (await dbIndexAll('photos', 'siteDate', [site, date])).length + 1;
+  const now = new Date();
+  const name = `${trDate(date)}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}_${n}.jpg`;
+  await dbPut('photos', { site, date, name, status: 'pending', blob, thumb, createdAt: Date.now() });
+  return thumb;
+}
 async function addPhotos(files) {
   const list = Array.from(files || []);
   if (!list.length || !state.site) return;
   $('photoMsg').textContent = 'Fotoğraflar hazırlanıyor…';
   const site = state.site, date = state.date;
-  const existing = await dbIndexAll('photos', 'siteDate', [site, date]);
-  let n = existing.length, ok = 0, fail = 0;
+  let ok = 0, fail = 0;
   for (const f of list) {
     try {
       const src = await decode(f);
-      const blob = await toJpeg(src, 1920, 0.8);
-      const thumb = await toJpeg(src, 240, 0.7);
-      if (src.close) src.close();
-      n++;
-      const now = new Date();
-      const name = `${trDate(date)}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}_${n}.jpg`;
-      await dbPut('photos', { site, date, name, status: 'pending', blob, thumb, createdAt: Date.now() });
+      try { await savePhoto(site, date, src); } finally { if (src.close) src.close(); }
       ok++;
     } catch { fail++; }
   }
@@ -489,6 +517,70 @@ async function addPhotos(files) {
 for (const id of ['camInput', 'galInput']) {
   $(id).addEventListener('change', async (e) => { const files = e.target.files; await addPhotos(files); e.target.value = ''; });
 }
+
+// ---------- Uygulama içi seri kamera ----------
+const cam = { stream: null, site: null, date: null, chain: Promise.resolve(), saved: 0, urls: [], fallback: false };
+function camNative(why) {
+  cam.fallback = true;
+  if (why) toast(why, 5000);
+  $('camInput').click();
+}
+async function openCamera() {
+  if (!state.site) return;
+  if (cam.fallback || !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
+    return camNative(cam.fallback ? '' : 'Bu tarayıcıda uygulama içi kamera yok; sistem kamerası açılıyor.');
+  }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 } }, audio: false });
+  } catch (err) {
+    const denied = err && (err.name === 'NotAllowedError' || err.name === 'SecurityError');
+    return camNative(denied ? 'Kamera izni verilmedi; sistem kamerası açılıyor. (Her fotoğrafta "Kullan" onayı çıkar.)' : 'Kamera açılamadı; sistem kamerası açılıyor.');
+  }
+  cam.stream = stream; cam.site = state.site; cam.date = state.date; cam.saved = 0;
+  cam.urls.forEach((u) => URL.revokeObjectURL(u)); cam.urls = [];
+  $('camStrip').textContent = ''; $('camCount').textContent = '0 fotoğraf';
+  const v = $('camVideo'); v.srcObject = stream; $('cam').hidden = false;
+  try { await v.play(); } catch { /* autoplay zaten var */ }
+}
+function camShot() {
+  const v = $('camVideo');
+  if (!cam.stream || !v.videoWidth) return;
+  const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
+  c.getContext('2d').drawImage(v, 0, 0);
+  try { $('camFlash').animate([{ opacity: 0.85 }, { opacity: 0 }], { duration: 180 }); } catch { /* yoksay */ }
+  const site = cam.site, date = cam.date;
+  // Her çekim hemen tuvale kopyalanır; kodlama/kaydetme sırayla yapılır, hiçbiri düşmez.
+  cam.chain = cam.chain.then(async () => {
+    try {
+      const thumb = await savePhoto(site, date, c);
+      cam.saved++;
+      $('camCount').textContent = `${cam.saved} fotoğraf`;
+      const u = URL.createObjectURL(thumb); cam.urls.push(u);
+      const im = document.createElement('img'); im.src = u; im.alt = '';
+      const strip = $('camStrip'); strip.prepend(im);
+      while (strip.children.length > 3) strip.lastChild.remove();
+      refreshBanner();
+    } catch { toast('Fotoğraf kaydedilemedi.'); }
+  });
+}
+async function closeCamera() {
+  if (!cam.stream) return;
+  const s = cam.stream; cam.stream = null;
+  s.getTracks().forEach((t) => t.stop());
+  $('camVideo').srcObject = null; $('cam').hidden = true;
+  await cam.chain;
+  const n = cam.saved; cam.saved = 0;
+  cam.urls.forEach((u) => URL.revokeObjectURL(u)); cam.urls = [];
+  if (n) toast(`${n} fotoğraf eklendi.`);
+  if (state.site === cam.site && state.date === cam.date) await renderPhotos();
+  refreshBanner(); scheduleSync();
+}
+$('camBtn').addEventListener('click', openCamera);
+$('camShutter').addEventListener('click', camShot);
+$('camDone').addEventListener('click', closeCamera);
+document.addEventListener('visibilitychange', () => { if (document.hidden) closeCamera(); });
+window.addEventListener('pagehide', closeCamera);
 
 // ---------- Senkronizasyon ----------
 async function pendingCount() {
@@ -519,7 +611,7 @@ async function post(payload) {
   finally { clearTimeout(timer); }
   let data;
   try { data = await res.json(); } catch { throw new Error('Sunucudan beklenmeyen yanıt geldi. Apps Script adresini kontrol edin.'); }
-  if (!data || !data.ok) throw new Error((data && data.error) || 'Sunucu hata döndürdü.');
+  if (!data || !data.ok) { const e = new Error((data && data.error) || 'Sunucu hata döndürdü.'); e.server = true; throw e; }
   return data;
 }
 function blobToBase64(blob) {
@@ -541,8 +633,23 @@ async function sync(manual = false) {
       return;
     }
     setError('');
-    // 1) günler
+    // 1) günler ve silme işlemleri
+    let noDeleteSupport = false, deleteErr = '';
     for (const q of await dbAll('queue')) {
+      if (q.type === 'deletePhoto') {
+        try {
+          await post({ action: 'deletePhoto', fileId: q.fileId });
+          await dbDel('queue', q.id);
+          if (q.photoId != null) await dbDel('photos', q.photoId);
+        } catch (err) {
+          if (!err.server) throw err; // internet yok: dur, sonra tekrar
+          if (/unknown action|Bilinmeyen işlem/i.test(err.message)) noDeleteSupport = true;
+          else deleteErr = err.message;
+          // bu öğe kuyrukta kalır; diğerleri devam eder
+        }
+        refreshBanner();
+        continue;
+      }
       const day = await dbGet('days', dayKey(q.site, q.date));
       if (!day) { await dbDel('queue', q.id); continue; }
       const stamp = day.updatedAt;
@@ -556,11 +663,19 @@ async function sync(manual = false) {
       if (!p.blob) { p.status = 'sent'; await dbPut('photos', p); continue; }
       const base64 = await blobToBase64(p.blob);
       const r = await post({ action: 'uploadPhoto', site: p.site, date: p.date, name: p.name, base64 });
-      p.status = 'sent'; p.fileId = r.fileId || ''; p.blob = null; // küçük resim kalır, büyük dosya silinir
-      await dbPut('photos', p);
+      const cur = await dbGet('photos', p.id);
+      if (!cur) { // yüklenirken kullanıcı sildi: Drive'dan da silinsin
+        if (r.fileId) await dbPut('queue', { id: `del|${r.fileId}`, type: 'deletePhoto', fileId: r.fileId });
+        continue;
+      }
+      cur.status = 'sent'; cur.fileId = r.fileId || ''; cur.blob = null; // küçük resim kalır, büyük dosya silinir
+      await dbPut('photos', cur);
       refreshBanner();
       if (state.site === p.site && state.date === p.date) renderPhotos();
     }
+    // kuyruktaki Drive silmeleri için sonuç iletisi (öteki işler yine de gönderildi)
+    if (noDeleteSupport) setError("Drive'dan silmek için Apps Script'i güncelleyin (README'ye bakın).");
+    else if (deleteErr) setError(deleteErr);
   } catch (err) {
     setError(err.message || 'Gönderim başarısız.');
   } finally {

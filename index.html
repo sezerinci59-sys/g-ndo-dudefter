@@ -67,7 +67,8 @@
   <section class="card">
     <h2>Fotoğraflar</h2>
     <div class="row two">
-      <label class="btn filebtn">Fotoğraf çek<input type="file" id="camInput" accept="image/*" capture="environment"></label>
+      <button type="button" id="camBtn" class="btn">Fotoğraf çek</button>
+      <input type="file" id="camInput" class="offscreen" accept="image/*" capture="environment" tabindex="-1" aria-hidden="true">
       <label class="btn filebtn ghost">Galeriden seç<input type="file" id="galInput" accept="image/*" multiple></label>
     </div>
     <div id="photoMsg" class="hint"></div>
@@ -81,6 +82,17 @@
     <p>Hangi şantiyedesiniz?</p>
     <button type="button" class="big" data-site="gundogdu">Gündoğdu</button>
     <button type="button" class="big" data-site="koseilyas">Köseilyas</button>
+  </div>
+</div>
+
+<div id="cam" class="camov" hidden>
+  <video id="camVideo" playsinline muted autoplay></video>
+  <div id="camFlash" class="camflash"></div>
+  <div class="cam-top"><span id="camCount" class="cam-count">0 fotoğraf</span></div>
+  <div class="cam-bottom">
+    <div id="camStrip" class="cam-strip" aria-label="Son çekilenler"></div>
+    <button type="button" id="camShutter" class="shutter" aria-label="Fotoğraf çek"></button>
+    <button type="button" id="camDone" class="cam-done">Bitti</button>
   </div>
 </div>
 
