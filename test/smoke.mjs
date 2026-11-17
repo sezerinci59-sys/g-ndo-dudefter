@@ -190,12 +190,12 @@ await page.click('#closeSettings');
 check((await teamSec('Kalıp').locator('.chip').count()) === 2 && (await page.locator('#chips section.hiddengrp').count()) === 0, 'Geri getir: üyeler ana ekranda');
 // Taşı + sil (iki adımlı)
 await page.click('#btnSettings');
-await tset('Kalıp').locator('summary').click();
+// kişi listesi varsayılan olarak açık
 await tset('Kalıp').locator('select[data-move="Deniz"]').selectOption({ label: 'Beton' });
 await page.click('#closeSettings');
 check((await teamSec('Beton').locator('.chip[data-name="Deniz"]').count()) === 1, 'isim Beton ekibine taşındı');
 await page.click('#btnSettings');
-await tset('Beton').locator('summary').click();
+// kişi listesi varsayılan olarak açık
 await tset('Beton').locator('button[data-del="Deniz"]').click();
 check((await page.locator('#teamSettings button[data-delyes]').count()) === 1, 'silme için ikinci adım düğmesi çıktı');
 await tset('Beton').locator('button[data-delyes="Deniz"]').click();

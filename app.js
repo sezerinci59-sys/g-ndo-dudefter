@@ -83,7 +83,7 @@ const fmtNum = (n) => String(n).replace('.', ',');
 
 // ---------- Durum ----------
 const state = { site: null, date: today(), day: null, teams: [], members: [], pulled: false };
-const ui = { hideTeam: null, delName: null, open: new Set() };
+const ui = { hideTeam: null, delName: null, closed: new Set() };
 let photoUrls = [];
 
 function toast(msg, ms = 2800) {
@@ -163,6 +163,8 @@ function renderTabs() {
     b.classList.toggle('active', on); b.setAttribute('aria-selected', on);
   });
 }
+const TEAM_COLORS = ['#3a8a3a', '#245edb', '#e07b00', '#7a4fb5', '#c0392b', '#138d90', '#8b5a2b'];
+function teamColor(name) { let h = 2166136261; for (const c of String(name)) h = Math.imul(h ^ c.codePointAt(0), 16777619) >>> 0; return TEAM_COLORS[(h >>> 8) % TEAM_COLORS.length]; }
 function chipBtn(name, v) {
   const b = document.createElement('button'); b.type = 'button';
   b.className = 'chip' + (v === 1 ? ' full' : v === 0.5 ? ' half' : '');
@@ -184,7 +186,7 @@ function renderChips() {
   for (const t of visible) {
     const mem = state.members.filter((m) => m.teamId === t.id);
     const present = mem.filter((m) => att[m.name] > 0).length;
-    const sec = document.createElement('section'); sec.className = 'team'; sec.dataset.team = t.id;
+    const sec = document.createElement('section'); sec.className = 'team'; sec.dataset.team = t.id; sec.style.setProperty('--tc', teamColor(t.name));
     const head = document.createElement('div'); head.className = 'team-head';
     const h = document.createElement('h3'); h.textContent = t.name;
     const cnt = document.createElement('span'); cnt.className = 'team-count';
@@ -409,7 +411,6 @@ function renderTeamSettings() {
     w.appendChild(el('div', { className: 'tset-row' }, nm, btn('Adı kaydet', { 'data-trename': t.id })));
     const mem = state.members.filter((m) => m.teamId === t.id);
     const det = el('details', { className: 'tmembers' }, el('summary', { text: `Kişiler (${mem.length})` }));
-    det.open = true;
     for (const m of mem) {
       const sel = el('select', { 'aria-label': m.name + ' ekibi' }); sel.dataset.move = m.name;
       for (const o of state.teams) sel.appendChild(el('option', { value: o.id, text: o.name + (o.hidden ? ' (gizli)' : ''), selected: o.id === m.teamId }));
@@ -418,7 +419,7 @@ function renderTeamSettings() {
       else row.append(btn('Sil', { 'data-del': m.name }));
       det.appendChild(row);
     }
-    det.open = ui.open.has(t.id); det.dataset.tid = t.id;
+    det.open = !ui.closed.has(t.id); det.dataset.tid = t.id;
     w.appendChild(det);
     if (t.hidden) w.appendChild(btn('Geri getir', { 'data-unhide': t.id }, 'btn small'));
     else if (ui.hideTeam === t.id) w.appendChild(el('div', { className: 'tset-row' }, btn('Evet, gizle', { 'data-hideyes': t.id }, 'btn small danger'), btn('Vazgeç', { 'data-hideno': '1' })));
@@ -456,7 +457,7 @@ $('teamSettings').addEventListener('click', async (e) => {
 });
 $('teamSettings').addEventListener('toggle', (e) => {
   const d = e.target; if (!d.dataset || !d.dataset.tid) return;
-  if (d.open) ui.open.add(d.dataset.tid); else ui.open.delete(d.dataset.tid);
+  if (d.open) ui.closed.delete(d.dataset.tid); else ui.closed.add(d.dataset.tid);
 }, true);
 $('teamSettings').addEventListener('change', async (e) => {
   const s = e.target.closest('select[data-move]'); if (!s) return;
