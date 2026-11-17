@@ -82,7 +82,7 @@ function longDate(s) {
 const fmtNum = (n) => String(n).replace('.', ',');
 
 // ---------- Durum ----------
-const state = { site: null, date: today(), day: null, teams: [], members: [] };
+const state = { site: null, date: today(), day: null, teams: [], members: [], pulled: false };
 const ui = { hideTeam: null, delName: null, open: new Set() };
 let photoUrls = [];
 
@@ -104,10 +104,10 @@ const EKIPSIZ = 'Ekipsiz';
 async function loadNames() {
   const rec = await dbGet('names', state.site);
   if (rec && Array.isArray(rec.teams)) {
-    state.teams = rec.teams; state.members = rec.members || [];
+    state.teams = rec.teams; state.members = rec.members || []; state.pulled = !!rec.pulled;
     return;
   }
-  state.teams = []; state.members = [];
+  state.teams = []; state.members = []; state.pulled = false;
   const list = (rec && Array.isArray(rec.list)) ? rec.list : [];
   if (list.length) {
     const id = newId();
@@ -122,16 +122,34 @@ function ensureEkipsiz() {
   return t;
 }
 const hasName = (v) => state.members.some((m) => m.name.toLocaleLowerCase('tr') === v.toLocaleLowerCase('tr'));
-async function persistDay(day) {
+// Eski kayıtlarda bayrak yok: senkronize değilse ikisi de değişmiş sayılır.
+const isAttDirty = (d) => d.attDirty != null ? !!d.attDirty : !d.synced;
+const isNoteDirty = (d) => d.noteDirty != null ? !!d.noteDirty : !d.synced;
+async function persistDay(day, what = {}) {
+  const a = isAttDirty(day) || !!what.att, n = isNoteDirty(day) || !!what.note;
+  day.attDirty = a; day.noteDirty = n;
   day.updatedAt = Date.now();
   day.synced = false;
   await dbPut('days', day);
-  await dbPut('queue', { id: `day|${day.site}|${day.date}`, type: 'saveDay', site: day.site, date: day.date });
+  await dbPut('queue', { id: `day|${day.site}|${day.date}`, type: 'saveDay', v: 2, site: day.site, date: day.date });
   refreshBanner();
   scheduleSync();
 }
-async function saveNames() {
-  await dbPut('names', { site: state.site, teams: state.teams, members: state.members, list: state.members.map((m) => m.name) });
+async function saveRosterData(site, r) {
+  await dbPut('names', { site, teams: r.teams, members: r.members, list: r.members.map((m) => m.name), pulled: !!r.pulled });
+}
+const saveNames = () => saveRosterData(state.site, state);
+// Yerel ekip/isim değişikliği: kaydet ve sunucuya gönderilmek üzere sıraya al (site başına tek kayıt).
+const rosterDirty = new Set();
+let rosterRev = 0;
+async function enqueueRoster(site) {
+  rosterDirty.add(site);
+  await dbPut('queue', { id: `roster|${site}`, type: 'saveRoster', site, rev: Date.now() + '.' + (++rosterRev) });
+  refreshBanner(); scheduleSync();
+}
+async function persistRoster() {
+  const site = state.site; rosterDirty.add(site);
+  await saveNames(); await enqueueRoster(site);
 }
 
 // ---------- Çizim ----------
@@ -219,8 +237,11 @@ async function renderPhotos() {
   for (const p of list) {
     const div = document.createElement('div'); div.className = 'photo ' + (p.status === 'sent' ? 'sent' : 'pending');
     const img = document.createElement('img');
-    const blob = p.thumb || p.blob;
-    if (blob) { const u = URL.createObjectURL(blob); photoUrls.push(u); img.src = u; }
+    const noThumb = () => { div.classList.add('nothumb'); img.remove(); };
+    if (p.thumbData) img.src = p.thumbData;
+    else if (p.status !== 'sent' && (p.thumb || p.blob)) { const u = URL.createObjectURL(p.thumb || p.blob); photoUrls.push(u); img.src = u; }
+    else setTimeout(noThumb, 0);
+    img.onerror = noThumb;
     img.alt = 'Fotoğraf';
     const s = document.createElement('span'); s.textContent = p.status === 'sent' ? 'Gönderildi' : 'Bekliyor';
     const d = document.createElement('button'); d.type = 'button'; d.dataset.pdel = String(p.id);
@@ -264,7 +285,7 @@ async function flushNote() {
   if (!state.day || !noteDirty) return;
   noteDirty = false;
   state.day.note = $('note').value;
-  await persistDay(state.day);
+  await persistDay(state.day, { note: true });
   $('noteState').textContent = 'Kaydedildi';
 }
 async function selectSite(site) {
@@ -272,12 +293,14 @@ async function selectSite(site) {
   state.site = site; ls.set('sd_site', site);
   await renderAll();
   $('picker').hidden = true;
+  pullDay(); pullRoster(site);
 }
 async function setDate(date) {
   if (!date) return;
   await flushNote();
   state.date = date;
   await renderAll();
+  pullDay();
 }
 
 // ---------- Konum ----------
@@ -327,7 +350,7 @@ $('chips').addEventListener('pointerdown', (e) => {
     try { navigator.vibrate?.(15); } catch { /* yoksay */ }
     const att = state.day.attendance;
     att[n] = att[n] === 0.5 ? 1 : 0.5;
-    renderChips(); await persistDay(state.day);
+    renderChips(); await persistDay(state.day, { att: true });
   }, 450);
 });
 $('chips').addEventListener('pointermove', (e) => {
@@ -342,12 +365,12 @@ $('chips').addEventListener('click', async (e) => {
     if (press.suppress) { press.suppress = false; return; }
     const n = t.dataset.name, v = att[n];
     if (!v) att[n] = 1; else delete att[n];
-    renderChips(); await persistDay(state.day);
+    renderChips(); await persistDay(state.day, { att: true });
   } else if (t.dataset.all) {
     const mem = state.members.filter((m) => m.teamId === t.dataset.all);
     if (!mem.length || mem.every((m) => att[m.name] === 1)) return;
     for (const m of mem) att[m.name] = 1;
-    renderChips(); await persistDay(state.day);
+    renderChips(); await persistDay(state.day, { att: true });
   }
 });
 $('chips').addEventListener('submit', async (e) => {
@@ -361,7 +384,7 @@ $('chips').addEventListener('submit', async (e) => {
   renderChips();
   const again = document.querySelector(`#chips form.teamadd[data-team="${f.dataset.team}"] input`);
   if (again) again.focus();
-  await saveNames();
+  await persistRoster();
 });
 $('teamForm').addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -370,7 +393,7 @@ $('teamForm').addEventListener('submit', async (e) => {
   if (state.teams.some((t) => t.name.toLocaleLowerCase('tr') === v.toLocaleLowerCase('tr'))) return toast('Bu ekip zaten var.');
   state.teams.push({ id: newId(), name: v, hidden: false });
   $('newTeam').value = '';
-  renderChips(); await saveNames();
+  renderChips(); await persistRoster();
 });
 
 // ---------- Ayarlar > Ekipler ----------
@@ -432,7 +455,7 @@ $('teamSettings').addEventListener('click', async (e) => {
   else if (d.delyes) { state.members = state.members.filter((m) => m.name !== d.delyes); ui.delName = null; changed = true; }
   else return;
   renderTeamSettings();
-  if (changed) { await saveNames(); renderChips(); }
+  if (changed) { await persistRoster(); renderChips(); }
 });
 $('teamSettings').addEventListener('toggle', (e) => {
   const d = e.target; if (!d.dataset || !d.dataset.tid) return;
@@ -441,7 +464,7 @@ $('teamSettings').addEventListener('toggle', (e) => {
 $('teamSettings').addEventListener('change', async (e) => {
   const s = e.target.closest('select[data-move]'); if (!s) return;
   const m = state.members.find((q) => q.name === s.dataset.move);
-  if (m) { m.teamId = s.value; await saveNames(); renderTeamSettings(); renderChips(); }
+  if (m) { m.teamId = s.value; await persistRoster(); renderTeamSettings(); renderChips(); }
 });
 $('copyYesterday').addEventListener('click', async () => {
   const prev = await dbGet('days', dayKey(state.site, shiftDate(state.date, -1)));
@@ -450,8 +473,8 @@ $('copyYesterday').addEventListener('click', async () => {
   state.day.attendance = { ...prev.attendance };
   let added = false;
   for (const n of Object.keys(prev.attendance)) if (!hasName(n)) { state.members.push({ name: n, teamId: ensureEkipsiz().id }); added = true; }
-  if (added) await saveNames();
-  renderChips(); await persistDay(state.day);
+  if (added) await persistRoster();
+  renderChips(); await persistDay(state.day, { att: true });
   toast('Dünkü liste kopyalandı.');
 });
 
@@ -493,7 +516,8 @@ async function savePhoto(site, date, src) {
   const n = (await dbIndexAll('photos', 'siteDate', [site, date])).length + 1;
   const now = new Date();
   const name = `${trDate(date)}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}_${n}.jpg`;
-  await dbPut('photos', { site, date, name, status: 'pending', blob, thumb, createdAt: Date.now() });
+  const thumbData = 'data:image/jpeg;base64,' + await blobToBase64(thumb);
+  await dbPut('photos', { site, date, name, status: 'pending', blob, thumb, thumbData, createdAt: Date.now() });
   return thumb;
 }
 async function addPhotos(files) {
@@ -588,7 +612,8 @@ async function pendingCount() {
   const p = await dbIndexAll('photos', 'status', 'pending');
   return q.length + p.length;
 }
-let syncing = false, resync = false, lastError = '';
+let syncing = false, resync = false, lastError = '', needUpdate = false;
+const UPDATE_MSG = "Bazı özellikler için Apps Script'i güncelleyin (Ayarlar > Sürüm notları).";
 async function refreshBanner() {
   const n = await pendingCount();
   $('pendingCount').textContent = String(n);
@@ -636,6 +661,27 @@ async function sync(manual = false) {
     // 1) günler ve silme işlemleri
     let noDeleteSupport = false, deleteErr = '';
     for (const q of await dbAll('queue')) {
+      if (q.type === 'saveRoster') {
+        try {
+          const r = await loadRoster(q.site);
+          if (!r.teams.length) { await dbDel('queue', q.id); rosterDirty.delete(q.site); continue; } // hiç ekip yok: sunucuyu boşaltma
+          if (!r.pulled) { // sunucudakini hiç görmeden üzerine yazma: önce çek ve birleştir
+            const d = await post({ action: 'getRoster', site: q.site });
+            mergeServerRoster(r, d.teams || []); r.pulled = true;
+            await saveRosterData(q.site, r);
+            if (q.site === state.site) { renderChips(); if (!$('settings').hidden) renderTeamSettings(); }
+          }
+          await post({ action: 'saveRoster', site: q.site, teams: toServerTeams(r) });
+          const cur = await dbGet('queue', q.id);
+          if (cur && cur.rev === q.rev) { await dbDel('queue', q.id); rosterDirty.delete(q.site); }
+        } catch (err) {
+          if (!err.server) throw err;
+          if (/unknown action|Bilinmeyen işlem/i.test(err.message)) noDeleteSupport = true;
+          else deleteErr = err.message;
+        }
+        refreshBanner();
+        continue;
+      }
       if (q.type === 'deletePhoto') {
         try {
           await post({ action: 'deletePhoto', fileId: q.fileId });
@@ -653,9 +699,18 @@ async function sync(manual = false) {
       const day = await dbGet('days', dayKey(q.site, q.date));
       if (!day) { await dbDel('queue', q.id); continue; }
       const stamp = day.updatedAt;
-      await post({ action: 'saveDay', site: day.site, date: day.date, attendance: day.attendance, note: day.note || '' });
+      const payload = { action: 'saveDay', site: day.site, date: day.date };
+      const legacy = !q.v; // eski sürümden kalan kuyruk öğesi: ikisini de gönder
+      let v2 = false; try { v2 = localStorage.getItem('sd_server_v2') === '1'; } catch { /* yoksay */ }
+      if (legacy || isAttDirty(day)) payload.attendance = day.attendance;
+      if (legacy || isNoteDirty(day) || (!v2 && payload.attendance !== undefined)) payload.note = day.note || '';
+      // Eski Apps Script "attendance" yoksa o günün puantajını siler: güncellenene kadar sadece-not gönderimi bekler.
+      if (!v2 && payload.attendance === undefined && payload.note !== undefined) {
+        needUpdate = true; setError(UPDATE_MSG); refreshBanner(); continue;
+      }
+      if (payload.attendance !== undefined || payload.note !== undefined) await post(payload);
       const cur = await dbGet('days', day.key);
-      if (cur && cur.updatedAt === stamp) { cur.synced = true; await dbPut('days', cur); await dbDel('queue', q.id); }
+      if (cur && cur.updatedAt === stamp) { cur.synced = true; cur.attDirty = false; cur.noteDirty = false; await dbPut('days', cur); await dbDel('queue', q.id); }
       refreshBanner();
     }
     // 2) fotoğraflar, tek tek
@@ -668,13 +723,16 @@ async function sync(manual = false) {
         if (r.fileId) await dbPut('queue', { id: `del|${r.fileId}`, type: 'deletePhoto', fileId: r.fileId });
         continue;
       }
-      cur.status = 'sent'; cur.fileId = r.fileId || ''; cur.blob = null; // küçük resim kalır, büyük dosya silinir
+      if (!cur.thumbData && cur.blob) { // eski kayıt: büyük dosyadan küçük resmi yazı olarak üret
+        try { const bm = await createImageBitmap(cur.blob); cur.thumbData = 'data:image/jpeg;base64,' + await blobToBase64(await toJpeg(bm, 240, 0.7)); } catch { /* yoksay */ }
+      }
+      cur.status = 'sent'; cur.fileId = r.fileId || ''; cur.blob = null; cur.thumb = null; // küçük resim yazı olarak kalır (iOS'ta Blob bozulabiliyor)
       await dbPut('photos', cur);
       refreshBanner();
       if (state.site === p.site && state.date === p.date) renderPhotos();
     }
     // kuyruktaki Drive silmeleri için sonuç iletisi (öteki işler yine de gönderildi)
-    if (noDeleteSupport) setError("Drive'dan silmek için Apps Script'i güncelleyin (README'ye bakın).");
+    if (noDeleteSupport || needUpdate) setError(UPDATE_MSG);
     else if (deleteErr) setError(deleteErr);
   } catch (err) {
     setError(err.message || 'Gönderim başarısız.');
@@ -686,8 +744,89 @@ async function sync(manual = false) {
 let syncTimer;
 function scheduleSync(ms = 1500) { clearTimeout(syncTimer); syncTimer = setTimeout(() => sync(), ms); }
 $('syncNow').addEventListener('click', () => sync(true));
-window.addEventListener('online', () => sync());
+window.addEventListener('online', () => { sync(); pullDay(); if (state.site) pullRoster(state.site); });
 setInterval(() => { if (document.visibilityState === 'visible') sync(); }, 60000);
+
+// ---------- Sunucudan çekme (Drive > telefon) ----------
+const canPull = () => navigator.onLine && !!(getSettings().url && getSettings().key);
+const isUnknownAction = (err) => err && err.server && /unknown action|Bilinmeyen işlem/i.test(err.message);
+async function loadRoster(site) {
+  if (site === state.site) return state;
+  const rec = await dbGet('names', site);
+  if (rec && Array.isArray(rec.teams)) return { teams: rec.teams, members: rec.members || [], pulled: !!rec.pulled };
+  const r = { teams: [], members: [], pulled: false };
+  const list = (rec && Array.isArray(rec.list)) ? rec.list : [];
+  if (list.length) { const id = newId(); r.teams.push({ id, name: EKIPSIZ, hidden: false }); r.members = list.map((name) => ({ name, teamId: id })); }
+  return r;
+}
+const normName = (s) => String(s == null ? '' : s).trim().replace(/\s+/g, ' ');
+const lcTr = (s) => s.toLocaleLowerCase('tr');
+const toServerTeams = (r) => r.teams.map((t) => ({ name: t.name, hidden: !!t.hidden, members: r.members.filter((m) => m.teamId === t.id).map((m) => m.name) }));
+// Sunucudaki ekipleri yerele ekler (hiçbir şey silmez). Dönüş: {changed, push}
+function mergeServerRoster(r, serverTeams) {
+  let changed = false;
+  const findTeam = (name) => r.teams.find((t) => lcTr(t.name) === lcTr(name));
+  const srv = [];
+  for (const st of serverTeams || []) {
+    const name = normName(st && st.name); if (!name) continue;
+    let t = findTeam(name);
+    if (!t) { t = { id: newId(), name, hidden: !!st.hidden }; r.teams.push(t); changed = true; }
+    const names = [];
+    for (const mn of (st.members || [])) {
+      const n = normName(mn); if (!n) continue;
+      names.push(lcTr(n));
+      if (!r.members.some((m) => lcTr(m.name) === lcTr(n))) { r.members.push({ name: n, teamId: t.id }); changed = true; }
+    }
+    srv.push({ key: lcTr(name), hidden: !!st.hidden, names: new Set(names) });
+  }
+  let push = false;
+  for (const t of r.teams) {
+    const s = srv.find((x) => x.key === lcTr(t.name));
+    if (!s || s.hidden !== !!t.hidden) { push = true; break; }
+    if (r.members.some((m) => m.teamId === t.id && !s.names.has(lcTr(m.name)))) { push = true; break; }
+  }
+  return { changed, push };
+}
+async function pullRoster(site) {
+  if (!site || !canPull()) return;
+  let data;
+  try { data = await post({ action: 'getRoster', site }); }
+  catch (err) { if (isUnknownAction(err)) { needUpdate = true; setError(UPDATE_MSG); refreshBanner(); } return; }
+  if (!data || !Array.isArray(data.teams)) return;
+  try { localStorage.setItem('sd_server_v2', '1'); } catch { /* yoksay */ }
+  needUpdate = false; if (lastError === UPDATE_MSG) { setError(''); refreshBanner(); }
+  const r = await loadRoster(site);
+  if (rosterDirty.has(site) || await dbGet('queue', `roster|${site}`)) { scheduleSync(); return; } // yerel değişiklik önce gider
+  const { changed, push } = mergeServerRoster(r, data.teams);
+  const first = !r.pulled; r.pulled = true;
+  if (changed || first) await saveRosterData(site, r);
+  if (site === state.site) {
+    if (changed) renderChips();
+    if (changed && !$('settings').hidden) renderTeamSettings();
+  }
+  if (push) await enqueueRoster(site);
+}
+async function pullDay() {
+  const site = state.site, date = state.date;
+  if (!site || !canPull()) return;
+  let data;
+  try { data = await post({ action: 'getDay', site, date }); } catch { return; }
+  if (!data || state.site !== site || state.date !== date || !state.day) return;
+  const day = state.day;
+  let changed = false;
+  if (!isAttDirty(day)) {
+    const att = {};
+    for (const [n, v] of Object.entries(data.attendance || {})) if (Number(v) > 0) att[n] = Number(v);
+    if (JSON.stringify(att) !== JSON.stringify(day.attendance || {})) { day.attendance = att; changed = true; }
+  }
+  if (!isNoteDirty(day) && !noteDirty) {
+    const note = data.note == null ? '' : String(data.note);
+    if (note !== (day.note || '')) { day.note = note; changed = true; }
+  }
+  if (!changed) return;
+  await dbPut('days', day);
+  renderChips(); renderNote();
+}
 
 // ---------- Ayarlar ----------
 function renderSurum() {
@@ -711,6 +850,7 @@ function openSettings() {
   renderSurum();
   const s = getSettings(); $('setUrl').value = s.url; $('setKey').value = s.key;
   $('testResult').textContent = ''; ui.hideTeam = null; ui.delName = null; renderTeamSettings(); renderLocInfo(); $('settings').hidden = false;
+  if (state.site) pullRoster(state.site);
 }
 function readSettingsForm() { ls.set('sd_settings', { url: $('setUrl').value.trim(), key: $('setKey').value.trim() }); }
 function autoSaveSettings() { readSettingsForm(); $('testResult').textContent = 'Kaydedildi ✓'; }

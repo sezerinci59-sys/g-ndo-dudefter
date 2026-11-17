@@ -23,6 +23,7 @@ var SITES = {
 
 var MONTHS_TR_UPPER = ['OCAK', 'ŞUBAT', 'MART', 'NİSAN', 'MAYIS', 'HAZİRAN', 'TEMMUZ', 'AĞUSTOS', 'EYLÜL', 'EKİM', 'KASIM', 'ARALIK'];
 var NOTES_SHEET = 'NOTLAR';
+var ROSTER_SHEET = 'EKİPLER';
 var DAY_COL_START = 2;   // B sütunu = ayın 1. günü
 var TOTAL_COL = 33;      // AG sütunu = TOPLAM
 
@@ -88,6 +89,8 @@ function handle_(req) {
     case 'uploadPhoto': return uploadPhoto_(req);
     case 'getDay': return getDay_(req);
     case 'deletePhoto': return deletePhoto_(req);
+    case 'getRoster': return getRoster_(req);
+    case 'saveRoster': return saveRoster_(req);
     default: return { ok: false, error: 'unknown action: ' + req.action };
   }
 }
@@ -176,14 +179,22 @@ function cleanAttendance_(att) {
 function saveDay_(req) {
   var cfg = site_(req);
   var dt = parseDate_(req.date);
+  var hasAtt = req.attendance !== undefined && req.attendance !== null;
+  var hasNote = req.note !== undefined && req.note !== null;
   var att = cleanAttendance_(req.attendance);
-  var note = req.note == null ? '' : String(req.note);
+  var note = hasNote ? String(req.note) : '';
 
   var lock = LockService.getScriptLock();
   lock.waitLock(30000);
   try {
     var siteKey = req.site;
     var ss = getSpreadsheet_(siteKey);
+    // Puantaj gelmediyse (dokunulmamış gün) ay sayfasına hiç dokunma
+    if (!hasAtt) {
+      if (hasNote) writeNote_(ss, dt, note);
+      SpreadsheetApp.flush();
+      return { ok: true, saved: 0, attendanceSkipped: true };
+    }
     var sh = getMonthSheet_(ss, dt);
 
     // Mevcut isimler (A sütunu)
@@ -211,8 +222,8 @@ function saveDay_(req) {
       sh.getRange(2, col, names.length, 1).setValues(vals);
     }
 
-    // Not
-    writeNote_(ss, dt, note);
+    // Not (yalnızca gönderildiyse)
+    if (hasNote) writeNote_(ss, dt, note);
     SpreadsheetApp.flush();
     return { ok: true, saved: Object.keys(att).length };
   } finally {
@@ -264,6 +275,71 @@ function getDay_(req) {
     }
   }
   return { ok: true, attendance: attendance, note: note };
+}
+
+// ---------------------------------------------------------------- Ekipler
+
+function getRosterSheet_(ss, create) {
+  var sh = ss.getSheetByName(ROSTER_SHEET);
+  if (sh || !create) return sh;
+  sh = ss.insertSheet(ROSTER_SHEET);
+  sh.getRange(1, 1, 1, 3).setValues([['Ekip', 'İsim', 'Gizli']]).setFontWeight('bold').setBackground('#e5e7eb');
+  sh.setFrozenRows(1);
+  sh.setColumnWidth(1, 180);
+  sh.setColumnWidth(2, 220);
+  return sh;
+}
+
+function getRoster_(req) {
+  site_(req);
+  var ss = getSpreadsheet_(req.site);
+  var sh = getRosterSheet_(ss, false);
+  var teams = [], byName = {};
+  if (sh && sh.getLastRow() > 1) {
+    var rows = sh.getRange(2, 1, sh.getLastRow() - 1, 3).getValues();
+    rows.forEach(function (r) {
+      var tn = String(r[0]).trim();
+      if (!tn) return;
+      var t = byName[tn];
+      if (!t) { t = { name: tn, hidden: false, members: [] }; byName[tn] = t; teams.push(t); }
+      if (String(r[2]).trim().toUpperCase() === 'EVET') t.hidden = true;
+      var mn = String(r[1]).trim();
+      if (mn && t.members.indexOf(mn) < 0) t.members.push(mn);
+    });
+  }
+  return { ok: true, teams: teams };
+}
+
+function saveRoster_(req) {
+  site_(req);
+  if (!Array.isArray(req.teams)) throw new Error('teams listesi gerekli.');
+  var rows = [];
+  req.teams.forEach(function (t) {
+    var tn = String(t && t.name != null ? t.name : '').trim();
+    if (!tn) return;
+    var hid = t.hidden ? 'EVET' : '';
+    var seen = {}, any = false;
+    (t.members || []).forEach(function (m) {
+      var mn = String(m == null ? '' : m).trim();
+      if (!mn || seen[mn]) return;
+      seen[mn] = true; any = true;
+      rows.push([tn, mn, hid]);
+    });
+    if (!any) rows.push([tn, '', hid]);
+  });
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    var ss = getSpreadsheet_(req.site);
+    var sh = getRosterSheet_(ss, true);
+    var last = sh.getLastRow();
+    if (last > 1) sh.getRange(2, 1, last - 1, 3).clearContent();
+    if (rows.length) sh.getRange(2, 1, rows.length, 3).setValues(rows);
+    SpreadsheetApp.flush();
+    return { ok: true, saved: rows.length };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 // ---------------------------------------------------------------- Fotoğraf

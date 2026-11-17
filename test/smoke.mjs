@@ -36,13 +36,32 @@ const errors = [];
 page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
 
+// Durumlu sahte sunucu: şantiye başına ekip listesi ve gün kayıtları (bellekte)
+const newSrv = () => ({ rosters: {}, days: {}, unknown: new Set() });
+let fileSeq = 0;
+function serverReply(srv, body) {
+  if (srv.unknown.has(body.action)) return { ok: false, error: 'unknown action: ' + body.action };
+  switch (body.action) {
+    case 'getRoster': return { ok: true, teams: srv.rosters[body.site] || [] };
+    case 'saveRoster': srv.rosters[body.site] = body.teams; return { ok: true };
+    case 'getDay': { const d = srv.days[body.site + '|' + body.date] || { attendance: {}, note: '' }; return { ok: true, attendance: d.attendance, note: d.note }; }
+    case 'saveDay': {
+      const k = body.site + '|' + body.date; const d = srv.days[k] || (srv.days[k] = { attendance: {}, note: '' });
+      if ('attendance' in body) d.attendance = body.attendance;
+      if ('note' in body) d.note = body.note;
+      return { ok: true };
+    }
+    default: return { ok: true, fileId: 'F' + (++fileSeq) };
+  }
+}
+const srv = newSrv();
 const received = [];
-let mockMode = 'ok', deleteReply = null, fileSeq = 0;
+let mockMode = 'ok', deleteReply = null;
 await page.route(GAS, async (route) => {
   if (mockMode === 'offline') return route.abort('failed');
   const body = JSON.parse(route.request().postData() || '{}');
   received.push({ body, ct: route.request().headers()['content-type'] });
-  const reply = body.action === 'deletePhoto' && deleteReply ? deleteReply : { ok: true, fileId: 'F' + (++fileSeq) };
+  const reply = body.action === 'deletePhoto' && deleteReply ? deleteReply : serverReply(srv, body);
   await route.fulfill({ status: 200, contentType: 'application/json',
     headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(reply) });
 });
@@ -115,10 +134,10 @@ check((await page.locator('#photoGrid .photo.sent').count()) === 1, 'küçük re
 const blobLeft = await page.evaluate(() => new Promise((res) => {
   const r = indexedDB.open('santiye-defteri'); r.onsuccess = () => {
     const q = r.result.transaction('photos').objectStore('photos').getAll();
-    q.onsuccess = () => res(q.result.map((p) => ({ blob: !!p.blob, thumb: !!p.thumb })));
+    q.onsuccess = () => res(q.result.map((p) => ({ blob: !!p.blob, thumb: typeof p.thumbData === 'string' && p.thumbData.startsWith('data:image/jpeg') })));
   };
 }));
-check(blobLeft.length === 1 && !blobLeft[0].blob && blobLeft[0].thumb, 'büyük dosya silindi, küçük resim kaldı');
+check(blobLeft.length === 1 && !blobLeft[0].blob && blobLeft[0].thumb, 'büyük dosya silindi, küçük resim yazı (data URL) olarak kaldı');
 check(errors.length === 0, 'konsol hatası yok' + (errors.length ? ': ' + errors.join(' | ') : ''));
 
 
@@ -343,6 +362,69 @@ await p2.reload(); await p2.waitForSelector('#chips .chip');
 check((await p2.locator('#chips section.team h3', { hasText: /^Ekipsiz$/ }).count()) === 1, 'göç ikinci açılışta tekrar ekip üretmedi');
 check(errs2.length === 0, 'göç testinde konsol hatası yok' + (errs2.length ? ': ' + errs2.join(' | ') : ''));
 await ctx2.close();
+
+// ---- Drive'dan çekme: ekipler ve geçmiş günler ----
+{
+  const srv4 = newSrv(), rec4 = [];
+  const ctx4 = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const p4 = await ctx4.newPage();
+  const errs4 = [];
+  p4.on('pageerror', (e) => errs4.push('pageerror: ' + e.message));
+  await p4.route(GAS, async (route) => {
+    const body = JSON.parse(route.request().postData() || '{}');
+    rec4.push(body);
+    await route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(serverReply(srv4, body)) });
+  });
+  await p4.addInitScript(([url]) => {
+    if (!localStorage.getItem('sd_settings')) { localStorage.setItem('sd_settings', JSON.stringify({ url, key: 'k' })); localStorage.setItem('sd_site', JSON.stringify('gundogdu')); }
+  }, [GAS]);
+  const yIso = await p4.evaluate(() => { const d = new Date(); d.setDate(d.getDate() - 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; });
+  srv4.rosters.gundogdu = [{ name: 'Kalıpçı', hidden: false, members: ['Sefa', 'Raskon'] }];
+  srv4.days['gundogdu|' + yIso] = { attendance: { Sefa: 1 }, note: 'Drive notu' };
+  await p4.goto(base + 'index.html');
+  const sec4 = p4.locator('#chips section.team', { has: p4.locator('h3', { hasText: /^Kalıpçı$/ }) });
+  await p4.waitForSelector('#chips .chip[data-name="Raskon"]', { timeout: 10000 });
+  check((await sec4.locator('.chip[data-name="Sefa"]').count()) === 1 && (await sec4.locator('.chip[data-name="Raskon"]').count()) === 1, 'sunucu ekibi: Sefa ve Raskon Kalıpçı altında göründü');
+  check(!rec4.some((b) => b.action === 'saveRoster'), 'sunucuyla aynı liste: saveRoster gönderilmedi');
+  const w4 = (fn, ms = 10000) => p4.waitForFunction(fn, null, { timeout: ms });
+  // (2) yerel isim sunucuya gider
+  await sec4.locator('form.teamadd input').fill('Yerel Usta');
+  await sec4.locator('form.teamadd button').click();
+  const until4 = async (fn, ms = 10000) => { const t = Date.now(); while (Date.now() - t < ms) { if (fn()) return true; await p4.waitForTimeout(100); } return false; };
+  check(await until4(() => (srv4.rosters.gundogdu[0].members || []).includes('Yerel Usta')), 'yerel isim saveRoster ile sunucuya gitti: ' + JSON.stringify(srv4.rosters.gundogdu));
+  check(srv4.rosters.gundogdu[0].members.includes('Sefa'), 'sunucudaki isimler korundu');
+  // (3) geçmiş gün sunucudan gelir
+  await p4.click('#prevDay');
+  await p4.waitForSelector('.chip.full[data-name="Sefa"]', { timeout: 10000 });
+  check(true, 'geçmiş günde Sefa Tam olarak Drive\'dan yüklendi');
+  await w4(() => document.getElementById('note').value === 'Drive notu');
+  check(true, 'geçmiş günün notu Drive\'dan yüklendi');
+  await p4.waitForTimeout(2500);
+  check(!rec4.some((b) => b.action === 'saveDay'), 'dokunulmayan güne saveDay gönderilmedi');
+  // (4) yalnızca not düzenlenir
+  await p4.fill('#note', 'Drive notu, düzeltildi');
+  await p4.waitForFunction(() => document.getElementById('noteState').textContent === 'Kaydedildi');
+  await p4.click('#syncNow');
+  await until4(() => rec4.some((b) => b.action === 'saveDay'));
+  const sd4 = rec4.filter((b) => b.action === 'saveDay').pop();
+  check(sd4 && sd4.note === 'Drive notu, düzeltildi' && !('attendance' in sd4), 'yalnız not düzenlendi: saveDay attendance içermiyor: ' + JSON.stringify(sd4));
+  check(srv4.days['gundogdu|' + yIso].attendance.Sefa === 1, 'sunucudaki puantaj bozulmadı');
+  // (5) eski Apps Script
+  srv4.unknown.add('getRoster'); srv4.unknown.add('saveRoster');
+  await p4.click('#nextDay');
+  await p4.fill('#note', 'Bugün notu');
+  await p4.waitForFunction(() => document.getElementById('noteState').textContent === 'Kaydedildi');
+  await p4.fill('#newTeam', 'Yeni Ekip'); await p4.click('#addTeam');
+  const sdN = rec4.filter((b) => b.action === 'saveDay').length;
+  await p4.click('#syncNow');
+  await p4.waitForFunction(() => /Apps Script'i güncelleyin/.test(document.getElementById('syncError').textContent), null, { timeout: 15000 });
+  check((await p4.textContent('#syncError')).includes('Ayarlar > Sürüm notları'), 'eski sunucu: güncelleme iletisi: ' + (await p4.textContent('#syncError')));
+  check(await until4(() => rec4.filter((b) => b.action === 'saveDay').length > sdN), 'eski sunucuda diğer öğeler (saveDay) yine gitti');
+  const q4 = await p4.evaluate(() => new Promise((res) => { const r = indexedDB.open('santiye-defteri'); r.onsuccess = () => { const q = r.result.transaction('queue').objectStore('queue').getAll(); q.onsuccess = () => res(q.result.map((x) => x.type)); }; }));
+  check(q4.includes('saveRoster') && !q4.includes('saveDay'), 'saveRoster kuyrukta bekliyor: ' + JSON.stringify(q4));
+  check(errs4.length === 0, 'Drive çekme testinde sayfa hatası yok' + (errs4.length ? ': ' + errs4.join(' | ') : ''));
+  await ctx4.close();
+}
 
 // Çevrimdışı: istekler iptal
 await page.unroute(GAS);
