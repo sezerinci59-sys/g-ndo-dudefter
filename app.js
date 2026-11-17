@@ -63,7 +63,8 @@ function longDate(s) {
 const fmtNum = (n) => String(n).replace('.', ',');
 
 // ---------- Durum ----------
-const state = { site: null, date: today(), day: null, names: [], editMode: false };
+const state = { site: null, date: today(), day: null, teams: [], members: [] };
+const ui = { hideTeam: null, delName: null, open: new Set() };
 let photoUrls = [];
 
 function toast(msg, ms = 2800) {
@@ -76,9 +77,32 @@ const dayKey = (site, date) => `${site}|${date}`;
 async function loadDay() {
   const rec = await dbGet('days', dayKey(state.site, state.date));
   state.day = rec || { key: dayKey(state.site, state.date), site: state.site, date: state.date, attendance: {}, note: '', updatedAt: 0, synced: true };
-  const n = await dbGet('names', state.site);
-  state.names = n ? n.list : [];
+  await loadNames();
 }
+const newId = () => 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+const EKIPSIZ = 'Ekipsiz';
+// Eski biçim {site, list:[ad]} -> yeni biçim {site, teams, members}; kayıp yok, otomatik.
+async function loadNames() {
+  const rec = await dbGet('names', state.site);
+  if (rec && Array.isArray(rec.teams)) {
+    state.teams = rec.teams; state.members = rec.members || [];
+    return;
+  }
+  state.teams = []; state.members = [];
+  const list = (rec && Array.isArray(rec.list)) ? rec.list : [];
+  if (list.length) {
+    const id = newId();
+    state.teams.push({ id, name: EKIPSIZ, hidden: false });
+    state.members = list.map((name) => ({ name, teamId: id }));
+    await saveNames();
+  }
+}
+function ensureEkipsiz() {
+  let t = state.teams.find((x) => x.name === EKIPSIZ);
+  if (!t) { t = { id: newId(), name: EKIPSIZ, hidden: false }; state.teams.push(t); }
+  return t;
+}
+const hasName = (v) => state.members.some((m) => m.name.toLocaleLowerCase('tr') === v.toLocaleLowerCase('tr'));
 async function persistDay(day) {
   day.updatedAt = Date.now();
   day.synced = false;
@@ -87,7 +111,9 @@ async function persistDay(day) {
   refreshBanner();
   scheduleSync();
 }
-async function saveNames() { await dbPut('names', { site: state.site, list: state.names }); }
+async function saveNames() {
+  await dbPut('names', { site: state.site, teams: state.teams, members: state.members, list: state.members.map((m) => m.name) });
+}
 
 // ---------- Çizim ----------
 function renderDate() {
@@ -100,37 +126,66 @@ function renderTabs() {
     b.classList.toggle('active', on); b.setAttribute('aria-selected', on);
   });
 }
+function chipBtn(name, v) {
+  const b = document.createElement('button'); b.type = 'button';
+  b.className = 'chip' + (v === 1 ? ' full' : v === 0.5 ? ' half' : '');
+  b.dataset.name = name;
+  b.append(document.createTextNode(name));
+  if (v) { const s = document.createElement('small'); s.textContent = v === 1 ? 'Tam' : 'Yarım'; b.appendChild(s); }
+  return b;
+}
 function renderChips() {
   const box = $('chips'); box.textContent = '';
   const att = state.day.attendance;
-  if (!state.names.length) {
+  const label = state.date === today() ? 'Bugün' : 'Bu gün';
+  const visible = state.teams.filter((t) => !t.hidden);
+  if (!visible.length) {
     const p = document.createElement('div'); p.className = 'hint';
-    p.textContent = 'Henüz isim yok. Aşağıdan "+ Yeni isim" ile ekleyin.';
+    p.textContent = 'Henüz ekip yok. Aşağıdan "+ Yeni ekip" ile ekleyin.';
     box.appendChild(p);
   }
-  for (const name of state.names) {
-    if (state.editMode) {
-      const w = document.createElement('span'); w.className = 'chip-edit';
-      const r = document.createElement('button'); r.type = 'button'; r.textContent = name + ' ✎'; r.dataset.rename = name;
-      const d = document.createElement('button'); d.type = 'button'; d.className = 'del'; d.textContent = '✕'; d.dataset.del = name;
-      d.setAttribute('aria-label', name + ' sil');
-      w.append(r, d); box.appendChild(w);
-    } else {
-      const v = att[name];
-      const b = document.createElement('button'); b.type = 'button';
-      b.className = 'chip' + (v === 1 ? ' full' : v === 0.5 ? ' half' : '');
-      b.dataset.name = name;
-      b.append(document.createTextNode(name));
-      if (v) { const s = document.createElement('small'); s.textContent = v === 1 ? 'Tam' : 'Yarım'; b.appendChild(s); }
-      box.appendChild(b);
-    }
+  for (const t of visible) {
+    const mem = state.members.filter((m) => m.teamId === t.id);
+    const present = mem.filter((m) => att[m.name] > 0).length;
+    const sec = document.createElement('section'); sec.className = 'team'; sec.dataset.team = t.id;
+    const head = document.createElement('div'); head.className = 'team-head';
+    const h = document.createElement('h3'); h.textContent = t.name;
+    const cnt = document.createElement('span'); cnt.className = 'team-count';
+    cnt.textContent = `${label.toLowerCase()} ${present}/${mem.length}`;
+    const all = document.createElement('button'); all.type = 'button'; all.className = 'btn small ghost';
+    all.dataset.all = t.id; all.textContent = 'Hepsi geldi';
+    head.append(h, cnt, all); sec.appendChild(head);
+    const chips = document.createElement('div'); chips.className = 'chips';
+    for (const m of mem) chips.appendChild(chipBtn(m.name, att[m.name]));
+    sec.appendChild(chips);
+    const f = document.createElement('form'); f.className = 'addform teamadd'; f.dataset.team = t.id; f.autocomplete = 'off';
+    const i = document.createElement('input'); i.type = 'text'; i.placeholder = 'Yeni isim'; i.autocapitalize = 'words';
+    i.setAttribute('aria-label', t.name + ' ekibine isim ekle');
+    const ab = document.createElement('button'); ab.type = 'submit'; ab.className = 'btn small plus'; ab.textContent = '+';
+    ab.setAttribute('aria-label', t.name + ' ekibine ekle');
+    f.append(i, ab); sec.appendChild(f);
+    box.appendChild(sec);
+  }
+  // Gizli ekiplerde / listede olmayıp o gün kaydı olanlar görünür kalır
+  const byName = new Map(state.members.map((m) => [m.name, m]));
+  const hiddenIds = new Set(state.teams.filter((t) => t.hidden).map((t) => t.id));
+  const hid = [], orphan = [];
+  for (const n of Object.keys(att)) {
+    if (!(att[n] > 0)) continue;
+    const m = byName.get(n);
+    if (!m) orphan.push(n); else if (hiddenIds.has(m.teamId)) hid.push(n);
+  }
+  for (const [title, arr, cls] of [['Gizli ekipten', hid, 'hiddengrp'], ['Listede olmayanlar', orphan, 'orphangrp']]) {
+    if (!arr.length) continue;
+    const sec = document.createElement('section'); sec.className = 'team ' + cls;
+    const h = document.createElement('h3'); h.textContent = title;
+    const chips = document.createElement('div'); chips.className = 'chips';
+    for (const n of arr) chips.appendChild(chipBtn(n, att[n]));
+    sec.append(h, chips); box.appendChild(sec);
   }
   const vals = Object.values(att).filter((v) => v > 0);
   const sum = vals.reduce((a, b) => a + b, 0);
-  const label = state.date === today() ? 'Bugün' : 'Bu gün';
   $('summary').textContent = `${label}: ${vals.length} kişi (${fmtNum(sum)} gün)`;
-  $('editNames').textContent = state.editMode ? 'Bitti' : 'Düzenle';
-  $('addForm').hidden = false;
 }
 function renderNote() {
   const ta = $('note');
@@ -170,14 +225,13 @@ async function flushNote() {
 async function selectSite(site) {
   await flushNote();
   state.site = site; ls.set('sd_site', site);
-  state.editMode = false;
   await renderAll();
   $('picker').hidden = true;
 }
 async function setDate(date) {
   if (!date) return;
   await flushNote();
-  state.date = date; state.editMode = false;
+  state.date = date;
   await renderAll();
 }
 
@@ -224,43 +278,104 @@ $('chips').addEventListener('click', async (e) => {
     const n = t.dataset.name, v = att[n];
     if (!v) att[n] = 1; else if (v === 1) att[n] = 0.5; else delete att[n];
     renderChips(); await persistDay(state.day);
-  } else if (t.dataset.rename) {
-    const old = t.dataset.rename;
-    const nn = (prompt('Yeni ad:', old) || '').trim();
-    if (!nn || nn === old) return;
-    if (state.names.includes(nn)) return toast('Bu isim zaten var.');
-    await renameName(old, nn);
-  } else if (t.dataset.del) {
-    const n = t.dataset.del;
-    if (!confirm(`"${n}" listeden silinsin mi? (Eski günlerdeki kayıtlar kalır.)`)) return;
-    state.names = state.names.filter((x) => x !== n);
-    await saveNames(); renderChips();
+  } else if (t.dataset.all) {
+    const mem = state.members.filter((m) => m.teamId === t.dataset.all);
+    if (!mem.length || mem.every((m) => att[m.name] === 1)) return;
+    for (const m of mem) att[m.name] = 1;
+    renderChips(); await persistDay(state.day);
   }
 });
-async function renameName(old, nn) {
-  state.names = state.names.map((x) => (x === old ? nn : x));
-  await saveNames();
-  // Bu şantiyenin günlerindeki kayıtları da yeni isme taşı
-  const all = await dbAll('days');
-  for (const d of all) {
-    if (d.site === state.site && d.attendance && old in d.attendance) {
-      d.attendance[nn] = d.attendance[old]; delete d.attendance[old];
-      if (d.key === state.day.key) state.day = d;
-      await persistDay(d);
-    }
-  }
-  renderChips();
-}
-$('editNames').addEventListener('click', () => { state.editMode = !state.editMode; renderChips(); });
-$('addForm').addEventListener('submit', async (e) => {
+$('chips').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const v = $('newName').value.trim().replace(/\s+/g, ' ');
+  const f = e.target.closest('form.teamadd'); if (!f) return;
+  const inp = f.querySelector('input');
+  const v = inp.value.trim().replace(/\s+/g, ' ');
   if (!v) return;
-  if (state.names.some((n) => n.toLocaleLowerCase('tr') === v.toLocaleLowerCase('tr'))) { toast('Bu isim zaten var.'); return; }
-  state.names.push(v);
-  $('newName').value = '';
+  if (hasName(v)) return toast('Bu isim zaten var.');
+  state.members.push({ name: v, teamId: f.dataset.team });
   renderChips();
+  const again = document.querySelector(`#chips form.teamadd[data-team="${f.dataset.team}"] input`);
+  if (again) again.focus();
   await saveNames();
+});
+$('teamForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const v = $('newTeam').value.trim().replace(/\s+/g, ' ');
+  if (!v) return;
+  if (state.teams.some((t) => t.name.toLocaleLowerCase('tr') === v.toLocaleLowerCase('tr'))) return toast('Bu ekip zaten var.');
+  state.teams.push({ id: newId(), name: v, hidden: false });
+  $('newTeam').value = '';
+  renderChips(); await saveNames();
+});
+
+// ---------- Ayarlar > Ekipler ----------
+function el(tag, props = {}, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) { if (k === 'text') n.textContent = v; else if (k in n) n[k] = v; else n.setAttribute(k, v); }
+  n.append(...kids); return n;
+}
+function renderTeamSettings() {
+  const box = $('teamSettings'); box.textContent = '';
+  if (!state.site) return;
+  const btn = (text, data, cls = 'btn small ghost') => el('button', { type: 'button', className: cls, text, ...data });
+  const teamBlock = (t) => {
+    const w = el('div', { className: 'tset', 'data-tset': t.id });
+    const nm = el('input', { type: 'text', value: t.name, 'aria-label': 'Ekip adı' }); nm.dataset.tname = t.id; nm.setAttribute('value', t.name);
+    w.appendChild(el('div', { className: 'tset-row' }, nm, btn('Adı kaydet', { 'data-trename': t.id })));
+    const mem = state.members.filter((m) => m.teamId === t.id);
+    const det = el('details', { className: 'tmembers' }, el('summary', { text: `Kişiler (${mem.length})` }));
+    for (const m of mem) {
+      const sel = el('select', { 'aria-label': m.name + ' ekibi' }); sel.dataset.move = m.name;
+      for (const o of state.teams) sel.appendChild(el('option', { value: o.id, text: o.name + (o.hidden ? ' (gizli)' : ''), selected: o.id === m.teamId }));
+      const row = el('div', { className: 'mrow' }, el('span', { className: 'mname', text: m.name }), sel);
+      if (ui.delName === m.name) row.append(btn('Evet, sil', { 'data-delyes': m.name }, 'btn small danger'), btn('Vazgeç', { 'data-delno': '1' }));
+      else row.append(btn('Sil', { 'data-del': m.name }));
+      det.appendChild(row);
+    }
+    det.open = ui.open.has(t.id); det.dataset.tid = t.id;
+    w.appendChild(det);
+    if (t.hidden) w.appendChild(btn('Geri getir', { 'data-unhide': t.id }, 'btn small'));
+    else if (ui.hideTeam === t.id) w.appendChild(el('div', { className: 'tset-row' }, btn('Evet, gizle', { 'data-hideyes': t.id }, 'btn small danger'), btn('Vazgeç', { 'data-hideno': '1' })));
+    else w.appendChild(btn('Ekibi gizle (işi bitti)', { 'data-hide': t.id }));
+    return w;
+  };
+  const vis = state.teams.filter((t) => !t.hidden), hid = state.teams.filter((t) => t.hidden);
+  if (!vis.length) box.appendChild(el('p', { className: 'hint', text: 'Görünen ekip yok.' }));
+  vis.forEach((t) => box.appendChild(teamBlock(t)));
+  if (hid.length) {
+    box.appendChild(el('h3', { text: 'Gizli ekipler' }));
+    hid.forEach((t) => box.appendChild(teamBlock(t)));
+  }
+}
+$('teamSettings').addEventListener('click', async (e) => {
+  const t = e.target.closest('button'); if (!t) return;
+  const d = t.dataset; let changed = false;
+  if (d.hide) { ui.hideTeam = d.hide; }
+  else if (d.hideno) { ui.hideTeam = null; }
+  else if (d.hideyes) { const x = state.teams.find((q) => q.id === d.hideyes); if (x) x.hidden = true; ui.hideTeam = null; changed = true; }
+  else if (d.unhide) { const x = state.teams.find((q) => q.id === d.unhide); if (x) x.hidden = false; changed = true; }
+  else if (d.trename) {
+    const v = $('teamSettings').querySelector(`input[data-tname="${d.trename}"]`).value.trim().replace(/\s+/g, ' ');
+    const x = state.teams.find((q) => q.id === d.trename);
+    if (!v || !x || v === x.name) return;
+    if (state.teams.some((q) => q !== x && q.name.toLocaleLowerCase('tr') === v.toLocaleLowerCase('tr'))) return toast('Bu ekip zaten var.');
+    x.name = v; changed = true; toast('Ekip adı değişti.');
+  }
+  else if (d.del) { ui.delName = d.del; }
+  else if (d.delno) { ui.delName = null; }
+  else if (d.delyes) { state.members = state.members.filter((m) => m.name !== d.delyes); ui.delName = null; changed = true; }
+  else return;
+  renderTeamSettings();
+  if (changed) { await saveNames(); renderChips(); }
+});
+$('teamSettings').addEventListener('toggle', (e) => {
+  const d = e.target; if (!d.dataset || !d.dataset.tid) return;
+  if (d.open) ui.open.add(d.dataset.tid); else ui.open.delete(d.dataset.tid);
+}, true);
+$('teamSettings').addEventListener('change', async (e) => {
+  const s = e.target.closest('select[data-move]'); if (!s) return;
+  const m = state.members.find((q) => q.name === s.dataset.move);
+  if (m) { m.teamId = s.value; await saveNames(); renderTeamSettings(); renderChips(); }
 });
 $('copyYesterday').addEventListener('click', async () => {
   const prev = await dbGet('days', dayKey(state.site, shiftDate(state.date, -1)));
@@ -268,7 +383,7 @@ $('copyYesterday').addEventListener('click', async () => {
   if (Object.keys(state.day.attendance).length && !confirm('Bugünkü işaretlerin üzerine yazılsın mı?')) return;
   state.day.attendance = { ...prev.attendance };
   let added = false;
-  for (const n of Object.keys(prev.attendance)) if (!state.names.includes(n)) { state.names.push(n); added = true; }
+  for (const n of Object.keys(prev.attendance)) if (!hasName(n)) { state.members.push({ name: n, teamId: ensureEkipsiz().id }); added = true; }
   if (added) await saveNames();
   renderChips(); await persistDay(state.day);
   toast('Dünkü liste kopyalandı.');
@@ -422,7 +537,7 @@ setInterval(() => { if (document.visibilityState === 'visible') sync(); }, 60000
 // ---------- Ayarlar ----------
 function openSettings() {
   const s = getSettings(); $('setUrl').value = s.url; $('setKey').value = s.key;
-  $('testResult').textContent = ''; renderLocInfo(); $('settings').hidden = false;
+  $('testResult').textContent = ''; ui.hideTeam = null; ui.delName = null; renderTeamSettings(); renderLocInfo(); $('settings').hidden = false;
 }
 function readSettingsForm() { ls.set('sd_settings', { url: $('setUrl').value.trim(), key: $('setKey').value.trim() }); }
 $('btnSettings').addEventListener('click', openSettings);

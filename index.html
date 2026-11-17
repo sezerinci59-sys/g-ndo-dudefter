@@ -45,16 +45,15 @@
   <section class="card">
     <div class="card-head">
       <h2>Puantaj</h2>
-      <button type="button" id="editNames" class="btn small ghost">Düzenle</button>
     </div>
     <div id="summary" class="summary"></div>
     <div id="chips" class="chips"></div>
     <div class="row">
       <button type="button" id="copyYesterday" class="btn ghost">Dünkü listeyi kopyala</button>
     </div>
-    <form id="addForm" class="addform" autocomplete="off">
-      <input type="text" id="newName" placeholder="Yeni isim" aria-label="Yeni isim" autocapitalize="words">
-      <button type="submit" id="addName" class="btn">+ Yeni isim</button>
+    <form id="teamForm" class="addform" autocomplete="off">
+      <input type="text" id="newTeam" placeholder="Yeni ekip adı" aria-label="Yeni ekip adı" autocapitalize="words">
+      <button type="submit" id="addTeam" class="btn">+ Yeni ekip</button>
     </form>
   </section>
 
@@ -98,6 +97,9 @@
       <button type="button" id="testConn" class="btn ghost">Bağlantıyı test et</button>
     </div>
     <div id="testResult" class="hint"></div>
+    <h2>Ekipler</h2>
+    <p class="hint">Seçili şantiyenin ekipleri. Gizlenen ekibin kayıtları silinmez.</p>
+    <div id="teamSettings"></div>
     <h2>Şantiye konumları</h2>
     <p class="hint">Şantiyedeyken düğmeye basın. Sonra uygulama açılınca 300 m içindeki şantiyeyi kendisi seçer.</p>
     <button type="button" class="btn ghost block" data-save-loc="gundogdu">Burayı Gündoğdu olarak kaydet</button>

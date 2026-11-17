@@ -51,9 +51,6 @@ main{max-width:640px;margin:0 auto;padding:10px calc(12px + env(safe-area-inset-
 .chip small{font-size:12px;font-weight:700}
 .chip.full{background:var(--full);border-color:var(--full);color:#fff}
 .chip.half{background:var(--half);border-color:var(--half);color:#111}
-.chip-edit{display:inline-flex;border:2px dashed var(--line);border-radius:24px;overflow:hidden}
-.chip-edit button{min-height:44px;min-width:44px;border:0;background:var(--chip);padding:0 12px}
-.chip-edit .del{color:var(--danger);font-weight:700}
 .addform{display:flex;gap:8px}
 .addform input,.field input,textarea{width:100%;min-height:48px;padding:10px 12px;border-radius:12px;border:1px solid var(--line);
   background:var(--chip);font-size:16px}
@@ -76,3 +73,22 @@ textarea{resize:vertical;min-height:110px}
 .big{display:block;width:100%;min-height:96px;margin:12px 0;border:0;border-radius:18px;background:var(--accent);color:var(--accent-text);font-size:24px;font-weight:700}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom));z-index:30;max-width:90%;
   background:#111;color:#fff;padding:12px 16px;border-radius:12px;font-size:15px}
+.team{border-top:1px solid var(--line);padding:10px 0 4px;margin-top:6px}
+.team:first-child{border-top:0;margin-top:0}
+.team h3{margin:0;font-size:16px;flex:1;min-width:0;overflow-wrap:anywhere}
+.team-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.team-count{color:var(--muted);font-size:14px;white-space:nowrap}
+.teamadd{margin:8px 0}
+.teamadd input{min-height:44px}
+.btn.plus{min-width:48px;padding:0;font-size:22px}
+.btn.danger{background:var(--danger);color:#fff;border:0}
+.hiddengrp h3,.orphangrp h3{color:var(--muted)}
+.tset{border:1px solid var(--line);border-radius:12px;padding:10px;margin:10px 0}
+.tset>.btn{margin-top:8px}
+.tset-row{display:flex;gap:8px;align-items:center;margin-top:8px}
+.tset-row input{flex:1;min-width:0;min-height:44px;padding:8px 12px;border-radius:12px;border:1px solid var(--line);background:var(--chip);font-size:16px}
+.tmembers summary{min-height:44px;display:flex;align-items:center;cursor:pointer;font-weight:600}
+.mrow{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:6px 0;border-top:1px solid var(--line)}
+.mname{flex:1 1 100%;font-weight:600}
+.mrow select{flex:1;min-width:0;min-height:44px;border-radius:12px;border:1px solid var(--line);background:var(--chip);padding:0 8px;font-size:16px}
+#settings h3{margin:16px 0 4px;font-size:16px}
