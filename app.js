@@ -584,6 +584,14 @@ function renderSurum() {
     d.append(sm, ul); box.appendChild(d);
   });
 }
+$('forceUpdate')?.addEventListener('click', async () => {
+  if (!navigator.onLine) return toast('İnternet yok, güncelleme alınamadı.');
+  toast('Güncelleniyor…');
+  try { for (const k of await caches.keys()) await caches.delete(k); } catch { /* yoksay */ }
+  try { for (const r of await navigator.serviceWorker.getRegistrations()) await r.unregister(); } catch { /* yoksay */ }
+  location.reload();
+});
+try { const e = $('surumEtiket'); if (e) e.textContent = `Sürüm ${SURUMLER[0].v}`; } catch { /* yoksay */ }
 function openSettings() {
   renderSurum();
   const s = getSettings(); $('setUrl').value = s.url; $('setKey').value = s.key;

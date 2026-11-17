@@ -108,10 +108,13 @@
     <button type="button" class="btn ghost block" data-save-loc="koseilyas">Burayı Köseilyas olarak kaydet</button>
     <div id="loc-koseilyas" class="hint"></div>
     <h2>Sürüm notları</h2>
+    <button type="button" class="btn ghost block" id="forceUpdate">Güncellemeyi şimdi al</button>
+    <p class="hint">Yazdıkların ve bekleyen fotoğraflar silinmez; sadece uygulama dosyaları yeniden indirilir.</p>
     <div id="surumNotlari"></div>
   </div>
 </div>
 
+<div id="surumEtiket" class="hint" style="text-align:center;padding:8px 0 calc(16px + env(safe-area-inset-bottom))"></div>
 <div id="toast" class="toast" role="status" hidden></div>
 <script type="module" src="app.js"></script>
 </body>
