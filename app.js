@@ -3,6 +3,8 @@ import { SURUMLER } from './surum.js';
 const SITES = { gundogdu: 'Gündoğdu', koseilyas: 'Köseilyas' };
 const RADIUS_M = 300;
 const MONTHS_TR = ['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'];
+const MONTHS_ABBR = ['Oca','Şub','Mar','Nis','May','Haz','Tem','Ağu','Eyl','Eki','Kas','Ara'];
+const DAYS_ABBR = ['Paz','Pzt','Sal','Çar','Per','Cum','Cmt'];
 const DAYS_TR = ['Pazar','Pazartesi','Salı','Çarşamba','Perşembe','Cuma','Cumartesi'];
 
 const $ = (id) => document.getElementById(id);
@@ -79,6 +81,10 @@ function longDate(s) {
   const d = parseISO(s);
   return `${d.getDate()} ${MONTHS_TR[d.getMonth()]} ${d.getFullYear()}, ${DAYS_TR[d.getDay()]}`;
 }
+function shortDate(s) {
+  const d = parseISO(s);
+  return `${d.getDate()} ${MONTHS_ABBR[d.getMonth()]} ${d.getFullYear()} ${DAYS_ABBR[d.getDay()]}`;
+}
 const fmtNum = (n) => String(n).replace('.', ',');
 
 // ---------- Durum ----------
@@ -154,7 +160,8 @@ async function persistRoster() {
 
 // ---------- Çizim ----------
 function renderDate() {
-  $('dateText').textContent = (state.date === today() ? 'Bugün · ' : '') + longDate(state.date);
+  $('dateText').textContent = (state.date === today() ? 'Bugün · ' : '') + shortDate(state.date);
+  $('puanSite').textContent = SITES[state.site] || '';
   $('dateInput').value = state.date;
 }
 function renderTabs() {
@@ -162,6 +169,7 @@ function renderTabs() {
     const on = b.dataset.site === state.site;
     b.classList.toggle('active', on); b.setAttribute('aria-selected', on);
   });
+  $('puanSite').textContent = SITES[state.site] || '';
 }
 const TEAM_COLORS = ['#3a8a3a', '#245edb', '#e07b00', '#7a4fb5', '#c0392b', '#138d90', '#8b5a2b'];
 function teamColor(name) { let h = 2166136261; for (const c of String(name)) h = Math.imul(h ^ c.codePointAt(0), 16777619) >>> 0; return TEAM_COLORS[(h >>> 8) % TEAM_COLORS.length]; }
@@ -250,7 +258,9 @@ async function renderPhotos() {
     const armed = armedPhoto === p.id;
     d.className = 'pdel' + (armed ? ' armed' : ''); d.textContent = armed ? 'Sil?' : '✕';
     d.setAttribute('aria-label', armed ? 'Silmek için tekrar dokunun' : 'Fotoğrafı sil');
-    div.append(img, s, d); grid.appendChild(div);
+    div.append(img, s);
+    if (p.kind === 'irsaliye') { const t = document.createElement('span'); t.className = 'irs'; t.textContent = 'İrsaliye'; div.appendChild(t); }
+    div.append(d); grid.appendChild(div);
   }
 }
 async function deletePhoto(id) {
@@ -508,17 +518,38 @@ async function toJpeg(src, maxSide, quality) {
   ctx.drawImage(src, 0, 0, c.width, c.height);
   return new Promise((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('toBlob'))), 'image/jpeg', quality));
 }
-async function savePhoto(site, date, src) {
+// Gün başına kalıcı İrsaliye sayacı: silinen fotoğrafın numarası asla yeniden kullanılmaz.
+function nextIrsNo(site, date) {
+  return openDB().then((db) => new Promise((resolve, reject) => {
+    const t = db.transaction(['meta', 'photos'], 'readwrite');
+    const meta = t.objectStore('meta'), key = `irs|${site}|${date}`;
+    let n = 0;
+    t.objectStore('photos').index('siteDate').getAll([site, date]).onsuccess = (e) => {
+      for (const p of e.target.result) { const m = /_(\d+)\.jpg$/.exec(p.name || ''); if (p.kind === 'irsaliye' && m) n = Math.max(n, Number(m[1])); }
+      meta.get(key).onsuccess = (ev) => {
+        n = Math.max(n, (ev.target.result && ev.target.result.v) || 0) + 1;
+        meta.put({ k: key, v: n });
+      };
+    };
+    t.oncomplete = () => resolve(n);
+    t.onerror = () => reject(t.error); t.onabort = () => reject(t.error);
+  }));
+}
+async function savePhoto(site, date, src, kind) {
   const blob = await toJpeg(src, 1920, 0.8);
   const thumb = await toJpeg(src, 240, 0.7);
-  const n = (await dbIndexAll('photos', 'siteDate', [site, date])).length + 1;
   const now = new Date();
-  const name = `${trDate(date)}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}_${n}.jpg`;
+  let name;
+  if (kind === 'irsaliye') name = `İrsaliye_${trDate(date)}_${await nextIrsNo(site, date)}.jpg`;
+  else {
+    const n = (await dbIndexAll('photos', 'siteDate', [site, date])).length + 1;
+    name = `${trDate(date)}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}_${n}.jpg`;
+  }
   const thumbData = 'data:image/jpeg;base64,' + await blobToBase64(thumb);
-  await dbPut('photos', { site, date, name, status: 'pending', blob, thumb, thumbData, createdAt: Date.now() });
+  await dbPut('photos', { site, date, name, status: 'pending', blob, thumb, thumbData, createdAt: Date.now(), ...(kind ? { kind } : {}) });
   return thumb;
 }
-async function addPhotos(files) {
+async function addPhotos(files, kind) {
   const list = Array.from(files || []);
   if (!list.length || !state.site) return;
   $('photoMsg').textContent = 'Fotoğraflar hazırlanıyor…';
@@ -527,7 +558,7 @@ async function addPhotos(files) {
   for (const f of list) {
     try {
       const src = await decode(f);
-      try { await savePhoto(site, date, src); } finally { if (src.close) src.close(); }
+      try { await savePhoto(site, date, src, kind); } finally { if (src.close) src.close(); }
       ok++;
     } catch { fail++; }
   }
@@ -536,28 +567,47 @@ async function addPhotos(files) {
   if (state.site === site && state.date === date) await renderPhotos();
   refreshBanner(); scheduleSync();
 }
+let nativeKind;
 for (const id of ['camInput', 'galInput']) {
-  $(id).addEventListener('change', async (e) => { const files = e.target.files; await addPhotos(files); e.target.value = ''; });
+  $(id).addEventListener('change', async (e) => {
+    const files = e.target.files, kind = id === 'camInput' ? nativeKind : undefined;
+    if (id === 'camInput') nativeKind = undefined;
+    await addPhotos(files, kind); e.target.value = '';
+  });
 }
 
 // ---------- Uygulama içi seri kamera ----------
-const cam = { stream: null, site: null, date: null, chain: Promise.resolve(), saved: 0, urls: [], fallback: false };
-function camNative(why) {
-  cam.fallback = true;
+const cam = { kind: undefined, stream: null, site: null, date: null, chain: Promise.resolve(), saved: 0, urls: [], fallback: false };
+function camNative(why, kind) {
+  cam.fallback = true; nativeKind = kind;
   if (why) toast(why, 5000);
   $('camInput').click();
 }
-async function openCamera() {
+async function openCamera(kind) {
+  if (kind !== 'irsaliye') kind = undefined;
   if (!state.site) return;
   if (cam.fallback || !(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) {
-    return camNative(cam.fallback ? '' : 'Bu tarayıcıda uygulama içi kamera yok; sistem kamerası açılıyor.');
+    return camNative(cam.fallback ? (kind ? 'Flaş açılamıyor; iyi ışıkta çekin.' : '') : 'Bu tarayıcıda uygulama içi kamera yok; sistem kamerası açılıyor.', kind);
   }
   let stream;
   try {
     stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 } }, audio: false });
   } catch (err) {
     const denied = err && (err.name === 'NotAllowedError' || err.name === 'SecurityError');
-    return camNative(denied ? 'Kamera izni verilmedi; sistem kamerası açılıyor. (Her fotoğrafta "Kullan" onayı çıkar.)' : 'Kamera açılamadı; sistem kamerası açılıyor.');
+    return camNative(denied ? 'Kamera izni verilmedi; sistem kamerası açılıyor. (Her fotoğrafta "Kullan" onayı çıkar.)' : 'Kamera açılamadı; sistem kamerası açılıyor.', kind);
+  }
+  cam.kind = kind;
+  $('camMode').hidden = !kind; $('camWarn').hidden = true;
+  if (kind) {
+    let on = false;
+    try {
+      const tr = stream.getVideoTracks()[0];
+      if (tr && tr.getCapabilities && tr.getCapabilities().torch) {
+        await tr.applyConstraints({ advanced: [{ torch: true }] });
+        on = !!(tr.getSettings && tr.getSettings().torch);
+      }
+    } catch { on = false; }
+    $('camWarn').hidden = on;
   }
   cam.stream = stream; cam.site = state.site; cam.date = state.date; cam.saved = 0;
   cam.urls.forEach((u) => URL.revokeObjectURL(u)); cam.urls = [];
@@ -571,11 +621,11 @@ function camShot() {
   const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
   c.getContext('2d').drawImage(v, 0, 0);
   try { $('camFlash').animate([{ opacity: 0.85 }, { opacity: 0 }], { duration: 180 }); } catch { /* yoksay */ }
-  const site = cam.site, date = cam.date;
+  const site = cam.site, date = cam.date, kind = cam.kind;
   // Her çekim hemen tuvale kopyalanır; kodlama/kaydetme sırayla yapılır, hiçbiri düşmez.
   cam.chain = cam.chain.then(async () => {
     try {
-      const thumb = await savePhoto(site, date, c);
+      const thumb = await savePhoto(site, date, c, kind);
       cam.saved++;
       $('camCount').textContent = `${cam.saved} fotoğraf`;
       const u = URL.createObjectURL(thumb); cam.urls.push(u);
@@ -589,7 +639,7 @@ function camShot() {
 async function closeCamera() {
   if (!cam.stream) return;
   const s = cam.stream; cam.stream = null;
-  s.getTracks().forEach((t) => t.stop());
+  s.getTracks().forEach((t) => { try { if (cam.kind) t.applyConstraints({ advanced: [{ torch: false }] }).catch(() => {}); } catch { /* yoksay */ } t.stop(); });
   $('camVideo').srcObject = null; $('cam').hidden = true;
   await cam.chain;
   const n = cam.saved; cam.saved = 0;
@@ -598,7 +648,8 @@ async function closeCamera() {
   if (state.site === cam.site && state.date === cam.date) await renderPhotos();
   refreshBanner(); scheduleSync();
 }
-$('camBtn').addEventListener('click', openCamera);
+$('camBtn').addEventListener('click', () => openCamera());
+$('matBtn').addEventListener('click', () => openCamera('irsaliye'));
 $('camShutter').addEventListener('click', camShot);
 $('camDone').addEventListener('click', closeCamera);
 document.addEventListener('visibilitychange', () => { if (document.hidden) closeCamera(); });
@@ -618,6 +669,7 @@ async function refreshBanner() {
   const bar = $('syncBar');
   bar.classList.toggle('pending', n > 0); bar.classList.toggle('err', !!lastError);
   $('syncText').innerHTML = n > 0 ? `<b id="pendingCount">${n}</b> öğe gönderilmeyi bekliyor` : `<b id="pendingCount">0</b> öğe bekliyor · hepsi gönderildi`;
+  bar.hidden = !(n > 0 || lastError);
   $('syncNow').disabled = syncing;
   $('syncNow').textContent = syncing ? 'Gönderiliyor…' : 'Şimdi gönder';
   const e = $('syncError'); e.hidden = !lastError; e.textContent = lastError;

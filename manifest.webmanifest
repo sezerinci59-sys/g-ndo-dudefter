@@ -1,6 +1,6 @@
 {
-  "name": "Şantiye Defteri",
-  "short_name": "Şantiye Defteri",
+  "name": "İmatek Şantiye Defteri",
+  "short_name": "İmatek Defter",
   "lang": "tr",
   "start_url": "./index.html",
   "scope": "./",

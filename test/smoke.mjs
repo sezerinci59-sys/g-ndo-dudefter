@@ -33,7 +33,7 @@ const browser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream',
 const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, permissions: ['camera'] });
 const page = await ctx.newPage();
 const errors = [];
-page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text() + ' @' + (m.location().url||'')); });
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
 
 // Durumlu sahte sunucu: şantiye başına ekip listesi ve gün kayıtları (bellekte)
@@ -111,7 +111,7 @@ await page.setInputFiles('#galInput', { name: 'test.jpg', mimeType: 'image/jpeg'
 await page.waitForSelector('#photoGrid .photo');
 
 // Gönder
-await page.click('#syncNow');
+await page.evaluate(() => document.getElementById('syncNow').click());
 await page.waitForFunction(() => document.getElementById('pendingCount').textContent === '0', null, { timeout: 15000 });
 
 const saveDay = received.filter((r) => r.body.action === 'saveDay');
@@ -158,7 +158,7 @@ await teamSec('Kalıp').locator('button[data-all]').click();
 check((await teamSec('Kalıp').locator('.chip.full').count()) === 2, 'Hepsi geldi: Kalıp tamamı Tam');
 check(/2\/2/.test(await teamSec('Kalıp').locator('.team-count').textContent()), 'ekip sayacı 2/2');
 check((await teamSec('Beton').locator('.chip.full, .chip.half').count()) === 2, 'Beton ekibi etkilenmedi');
-await page.click('#syncNow');
+await page.evaluate(() => document.getElementById('syncNow').click());
 await page.waitForFunction(() => document.getElementById('pendingCount').textContent === '0', null, { timeout: 15000 });
 const sd2 = received.filter((r) => r.body.action === 'saveDay').pop().body.attendance;
 check(sd2['Can'] === 1 && sd2['Deniz'] === 1 && sd2['Ali Veli'] === 1 && sd2['Ayşe Yılmaz'] === 0.5 && Object.keys(sd2).length === 4,
@@ -245,11 +245,11 @@ await page.locator('#photoGrid .photo.pending .pdel').click();
 await waitUntil(async () => (await page.locator('#photoGrid .photo.pending').count()) === 0, 3000);
 check((await page.locator('#photoGrid .photo.pending').count()) === 0, 'bekleyen fotoğraf iki dokunuşla arayüzden kalktı');
 check((await idbPhotos()).every((p) => p.status !== 'pending'), 'bekleyen fotoğraf IndexedDB den silindi');
-await page.click('#syncNow');
+await page.evaluate(() => document.getElementById('syncNow').click());
 await page.waitForFunction(() => !document.getElementById('syncError').hidden, null, { timeout: 15000 });
 errors.length = 0;
 mockMode = 'ok';
-await page.click('#syncNow'); await settle();
+await page.evaluate(() => document.getElementById('syncNow').click()); await settle();
 check(upCount() === upBefore, 'silinen bekleyen fotoğraf için yükleme gönderilmedi');
 
 // yüklenmiş fotoğraf: sadece listeden kalkar, Drive'a silme isteği GİTMEZ
@@ -260,11 +260,12 @@ await page.waitForSelector('#photoGrid .pdel.armed');
 await page.locator('#photoGrid .photo.sent .pdel').click();
 await waitUntil(async () => (await page.locator('#photoGrid .photo').count()) === 0, 3000);
 check((await page.locator('#photoGrid .photo').count()) === 0, 'yüklenmiş fotoğraf listeden kalktı');
-await page.click('#syncNow'); await settle();
+await page.evaluate(() => document.getElementById('syncNow').click()); await settle();
 check(!received.some((r) => r.body.action === 'deletePhoto'), "Drive'a silme isteği gönderilmedi");
 check((await idbPhotos()).length === 0 && (await idbQueue()).length === 0, 'kayıt ve kuyruk temiz');
 
 // ---- Uygulama içi kamera ----
+errors.length = 0; // çevrimdışı taklidinden kalan yeniden deneme ağ hatası olabilir
 await page.evaluate(() => {
   window.__streams = [];
   const o = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
@@ -283,9 +284,48 @@ check(await page.locator('#cam').isHidden(), 'Bitti kamerayı kapattı');
 const ended = await page.evaluate(() => window.__streams.length > 0 && window.__streams.every((s) => s.getTracks().every((t) => t.readyState === 'ended')));
 check(ended, 'kamera izleri durduruldu');
 await waitUntil(async () => (await idbPhotos()).filter((p) => p.status !== 'deleted').length >= 3);
-await page.click('#syncNow'); await settle();
+await page.evaluate(() => document.getElementById('syncNow').click()); await settle();
 check(upCount() - upB3 === 3, '3 çekim yüklendi: ' + (upCount() - upB3));
 check((await page.locator('#photoGrid .photo.sent').count()) >= 3, 'çekilenler listede');
+// ---- v2.0: başlık, tarih, bildirim kutusu, sekmeler, malzeme girişi ----
+check((await page.locator('#syncBar').isHidden()), 'bekleyen yok, hata yok: bildirim kutusu gizli');
+const ttl = await page.locator('.apptitle').boundingBox();
+check((await page.textContent('.apptitle')) === 'İmatek Şantiye Defteri' && Math.abs(ttl.x + ttl.width / 2 - 195) < 3, 'başlık ortada: ' + (ttl.x + ttl.width / 2));
+const dl = await page.locator('#dateText').evaluate((e) => ({ h: e.getBoundingClientRect().height, lh: parseFloat(getComputedStyle(e).lineHeight), t: e.textContent, ws: getComputedStyle(e).whiteSpace }));
+check(dl.h <= dl.lh * 1.5 && dl.ws === 'nowrap' && /^Bugün · \d+ \S{3} \d{4} \S{3}$/.test(dl.t), 'tarih tek satır: ' + dl.t + ' h=' + dl.h);
+check(/Puantaj — Gündoğdu/.test(await page.textContent('.card-head h2')), 'Puantaj başlığında şantiye adı');
+check((await page.locator('#siteTabs button.active').evaluate((e) => getComputedStyle(e, '::before').content)).includes('✔'), 'aktif sekmede ✔');
+const todayTr = await page.evaluate(() => { const d = new Date(), p = (n) => String(n).padStart(2, '0'); return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()}`; });
+const normalUps = received.filter((r) => r.body.action === 'uploadPhoto').map((r) => r.body.name);
+check(normalUps.length > 0 && normalUps.every((n) => /^\d\d\.\d\d\.\d{4}_\d{6}_\d+\.jpg$/.test(n)), 'normal fotoğraf adı değişmedi: ' + normalUps[0]);
+const upB5 = upCount();
+await page.click('#matBtn');
+await page.waitForSelector('#cam:not([hidden])');
+await page.waitForFunction(() => document.getElementById('camVideo').videoWidth > 0, null, { timeout: 10000 });
+check((await page.textContent('#camMode')).includes('Malzeme girişi (İrsaliye)') && await page.locator('#camMode').isVisible(), 'kamerada Malzeme girişi etiketi');
+check(await page.locator('#camWarn').isVisible() && (await page.textContent('#camWarn')).includes('flaş açılamadı'), 'flaş yok uyarısı görünür');
+await page.screenshot({ path: '/tmp/claude-0/-home-user/dfd6405a-5f4c-5037-9513-cd07bd58f531/scratchpad/v20c.png' });
+for (let i = 0; i < 2; i++) { await page.locator('#camShutter').click(); await page.waitForTimeout(300); }
+await page.click('#camDone');
+await waitUntil(async () => (await page.locator('#photoGrid .photo .irs').count()) === 2);
+check((await page.locator('#photoGrid .photo .irs').count()) === 2, 'küçük resimlerde İrsaliye etiketi');
+await page.evaluate(() => document.getElementById('syncNow').click()); await settle();
+let irs = received.filter((r) => r.body.action === 'uploadPhoto').slice(upB5).map((r) => r.body.name);
+check(JSON.stringify(irs) === JSON.stringify([`İrsaliye_${todayTr}_1.jpg`, `İrsaliye_${todayTr}_2.jpg`]), 'irsaliye adları: ' + irs);
+const second = page.locator('#photoGrid .photo:has(.irs)').nth(1);
+await second.locator('.pdel').click(); await page.waitForSelector('#photoGrid .pdel.armed');
+await second.locator('.pdel').click();
+await waitUntil(async () => (await page.locator('#photoGrid .photo .irs').count()) === 1, 3000);
+const upB6 = upCount();
+await page.click('#matBtn');
+await page.waitForSelector('#cam:not([hidden])');
+await page.waitForFunction(() => document.getElementById('camVideo').videoWidth > 0, null, { timeout: 10000 });
+await page.locator('#camShutter').click(); await page.waitForTimeout(300);
+await page.click('#camDone');
+await waitUntil(async () => (await page.locator('#photoGrid .photo .irs').count()) === 2);
+await page.evaluate(() => document.getElementById('syncNow').click()); await settle();
+irs = received.filter((r) => r.body.action === 'uploadPhoto').slice(upB6).map((r) => r.body.name);
+check(JSON.stringify(irs) === JSON.stringify([`İrsaliye_${todayTr}_3.jpg`]), 'silinen numara yeniden kullanılmadı: ' + irs);
 // Yedek yol: getUserMedia reddedilirse yerel giriş
 await page.evaluate(() => { navigator.mediaDevices.getUserMedia = () => Promise.reject(Object.assign(new Error('x'), { name: 'NotAllowedError' })); });
 const upB4 = upCount();
@@ -294,8 +334,15 @@ check(await page.locator('#cam').isHidden(), 'reddedilince tam ekran kamera aç�
 check(/Kamera izni/.test(await page.textContent('#toast')), 'bildirim: ' + (await page.textContent('#toast')));
 await fc.setFiles(jpegFile);
 await waitUntil(() => page.locator('#photoGrid .photo.pending').count().then((n) => n > 0));
-await page.click('#syncNow'); await settle();
+await page.evaluate(() => document.getElementById('syncNow').click()); await settle();
 check(upCount() - upB4 === 1, 'yedek yoldan çekilen fotoğraf yüklendi');
+const upB7 = upCount();
+const [fc2] = await Promise.all([page.waitForEvent('filechooser'), page.click('#matBtn')]);
+await fc2.setFiles(jpegFile);
+await waitUntil(async () => (await page.locator('#photoGrid .photo .irs').count()) === 3);
+await page.evaluate(() => document.getElementById('syncNow').click()); await settle();
+irs = received.filter((r) => r.body.action === 'uploadPhoto').slice(upB7).map((r) => r.body.name);
+check(JSON.stringify(irs) === JSON.stringify([`İrsaliye_${todayTr}_4.jpg`]), 'yedek yolda da irsaliye adı: ' + irs);
 check(errors.length === 0, 'silme/kamera akışında konsol hatası yok' + (errors.length ? ': ' + errors.join(' | ') : ''));
 
 // ---- Göç testi: eski biçim ----
@@ -376,7 +423,7 @@ await ctx2.close();
   // (4) yalnızca not düzenlenir
   await p4.fill('#note', 'Drive notu, düzeltildi');
   await p4.waitForFunction(() => document.getElementById('noteState').textContent === 'Kaydedildi');
-  await p4.click('#syncNow');
+  await p4.evaluate(() => document.getElementById('syncNow').click());
   await until4(() => rec4.some((b) => b.action === 'saveDay'));
   const sd4 = rec4.filter((b) => b.action === 'saveDay').pop();
   check(sd4 && sd4.note === 'Drive notu, düzeltildi' && !('attendance' in sd4), 'yalnız not düzenlendi: saveDay attendance içermiyor: ' + JSON.stringify(sd4));
@@ -388,7 +435,7 @@ await ctx2.close();
   await p4.waitForFunction(() => document.getElementById('noteState').textContent === 'Kaydedildi');
   await p4.fill('#newTeam', 'Yeni Ekip'); await p4.click('#addTeam');
   const sdN = rec4.filter((b) => b.action === 'saveDay').length;
-  await p4.click('#syncNow');
+  await p4.evaluate(() => document.getElementById('syncNow').click());
   await p4.waitForFunction(() => /Apps Script'i güncelleyin/.test(document.getElementById('syncError').textContent), null, { timeout: 15000 });
   check((await p4.textContent('#syncError')).includes('Ayarlar > Sürüm notları'), 'eski sunucu: güncelleme iletisi: ' + (await p4.textContent('#syncError')));
   check(await until4(() => rec4.filter((b) => b.action === 'saveDay').length > sdN), 'eski sunucuda diğer öğeler (saveDay) yine gitti');
@@ -403,7 +450,7 @@ await page.unroute(GAS);
 await page.route(GAS, (route) => route.abort('failed'));
 await page.fill('#note', 'Çevrimdışı not.');
 await page.waitForFunction(() => document.getElementById('noteState').textContent === 'Kaydedildi');
-await page.click('#syncNow');
+await page.evaluate(() => document.getElementById('syncNow').click());
 await page.waitForFunction(() => !document.getElementById('syncError').hidden, null, { timeout: 15000 });
 const pending = Number(await page.textContent('#pendingCount'));
 check(pending > 0, `çevrimdışı: bekleyen sayısı ${pending} > 0`);
@@ -441,7 +488,7 @@ await ctx3.close();
 // Ayar yoksa Türkçe uyarı
 await page.unroute(GAS);
 await page.evaluate(() => localStorage.setItem('sd_settings', '{}'));
-await page.click('#syncNow');
+await page.evaluate(() => document.getElementById('syncNow').click());
 await page.waitForFunction(() => /Ayarlar/.test(document.getElementById('syncError').textContent));
 check(true, 'URL/anahtar yokken uyarı: ' + (await page.textContent('#syncError')).slice(0, 50) + '…');
 

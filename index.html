@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
-<title>Şantiye Defteri</title>
+<title>İmatek Şantiye Defteri</title>
 <meta name="theme-color" content="#245edb">
 <meta name="color-scheme" content="light">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="apple-mobile-web-app-title" content="Şantiye Defteri">
+<meta name="apple-mobile-web-app-title" content="İmatek Defter">
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" type="image/png" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
@@ -17,7 +17,8 @@
 </head>
 <body>
 <header class="top">
-  <div class="apptitle">Şantiye Defteri</div>
+  <span class="top-side" aria-hidden="true"></span>
+  <div class="apptitle">İmatek Şantiye Defteri</div>
   <button type="button" id="btnSettings" class="icon-btn" aria-label="Ayarlar">⚙️</button>
 </header>
 
@@ -36,7 +37,7 @@
     <button type="button" id="nextDay" class="icon-btn" aria-label="Sonraki gün">›</button>
   </div>
 
-  <div id="syncBar" class="syncbar">
+  <div id="syncBar" class="syncbar" hidden>
     <div class="sync-row">
       <span class="sync-ico" aria-hidden="true">ℹ️</span><span id="syncText" class="sync-text"><b id="pendingCount">0</b> öğe gönderilmeyi bekliyor</span>
       <button type="button" id="syncNow" class="btn small">Şimdi gönder</button>
@@ -46,7 +47,7 @@
 
   <section class="card">
     <div class="card-head">
-      <h2>Puantaj</h2>
+      <h2>Puantaj — <span id="puanSite"></span></h2>
     </div>
     <p class="hint" id="chipHint">Dokun: tam gün · Basılı tut: yarım gün</p>
     <div id="summary" class="summary"></div>
@@ -73,6 +74,7 @@
       <input type="file" id="camInput" class="offscreen" accept="image/*" capture="environment" tabindex="-1" aria-hidden="true">
       <label class="btn filebtn ghost">Galeriden seç<input type="file" id="galInput" accept="image/*" multiple></label>
     </div>
+    <div class="row"><button type="button" id="matBtn" class="btn">📦 Malzeme girişi</button></div>
     <div id="photoMsg" class="hint"></div>
     <div id="photoGrid" class="photo-grid"></div>
   </section>
@@ -92,7 +94,7 @@
 <div id="cam" class="camov" hidden>
   <video id="camVideo" playsinline muted autoplay></video>
   <div id="camFlash" class="camflash"></div>
-  <div class="cam-top"><span id="camCount" class="cam-count">0 fotoğraf</span></div>
+  <div class="cam-top"><span id="camMode" class="cam-mode" hidden>Malzeme girişi (İrsaliye)</span><span id="camCount" class="cam-count">0 fotoğraf</span><div id="camWarn" class="cam-warn" hidden>Bu telefonda flaş açılamadı — iyi ışıkta çekin.</div></div>
   <div class="cam-bottom">
     <div id="camStrip" class="cam-strip" aria-label="Son çekilenler"></div>
     <button type="button" id="camShutter" class="shutter" aria-label="Fotoğraf çek"></button>
