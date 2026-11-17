@@ -445,6 +445,102 @@ await ctx2.close();
   await ctx4.close();
 }
 
+// ---- Ortak liste, İthal sırası, Sigorta çıkışı ----
+{
+  const srv5 = newSrv(), rec5 = [];
+  const ctx5 = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const p5 = await ctx5.newPage();
+  const errs5 = [];
+  p5.on('pageerror', (e) => errs5.push('pageerror: ' + e.message));
+  await p5.route(GAS, async (route) => {
+    const body = JSON.parse(route.request().postData() || '{}');
+    rec5.push(body);
+    await route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(serverReply(srv5, body)) });
+  });
+  await p5.goto(base + 'manifest.webmanifest');
+  const isoOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const yIso5 = await p5.evaluate(() => { const d = new Date(); d.setDate(d.getDate() - 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; });
+  const tIso5 = await p5.evaluate(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; });
+  await p5.evaluate(([y, url]) => new Promise((res, rej) => {
+    const r = indexedDB.open('santiye-defteri', 1);
+    r.onupgradeneeded = () => {
+      const db = r.result;
+      db.createObjectStore('days', { keyPath: 'key' }); db.createObjectStore('names', { keyPath: 'site' });
+      const p = db.createObjectStore('photos', { keyPath: 'id', autoIncrement: true });
+      p.createIndex('siteDate', ['site', 'date']); p.createIndex('status', 'status');
+      db.createObjectStore('queue', { keyPath: 'id' });
+    };
+    r.onsuccess = () => {
+      const t = r.result.transaction(['names', 'days'], 'readwrite');
+      t.objectStore('names').put({ site: 'gundogdu', teams: [{ id: 'a1', name: 'Kalıp', hidden: false }], members: [{ name: 'Zeki', teamId: 'a1' }, { name: 'Mehmet', teamId: 'a1' }] });
+      t.objectStore('names').put({ site: 'koseilyas', list: ['mehmet', 'Ali Köse'] });
+      t.objectStore('days').put({ key: 'koseilyas|' + y, site: 'koseilyas', date: y, attendance: { Zeki: 1 }, note: '', updatedAt: 1, synced: true });
+      t.oncomplete = () => res(); t.onerror = () => rej(t.error);
+    };
+    localStorage.setItem('sd_settings', JSON.stringify({ url, key: 'k' })); localStorage.setItem('sd_site', JSON.stringify('gundogdu'));
+  }), [yIso5, GAS]);
+  srv5.days['koseilyas|' + yIso5] = { attendance: { Zeki: 1 }, note: '' };
+  await p5.goto(base + 'index.html');
+  await p5.waitForSelector('#chips .chip[data-name="Ali Köse"]');
+  const names5 = async () => (await p5.locator('#chips .chip').evaluateAll((a) => a.map((x) => x.dataset.name))).sort();
+  check(JSON.stringify(await names5()) === JSON.stringify(['Ali Köse', 'Mehmet', 'Zeki']), 'ortak liste: eski iki şantiye listesi birleşti (Mehmet tek): ' + JSON.stringify(await names5()));
+  await p5.locator('#siteTabs [data-site="koseilyas"]').click();
+  await p5.waitForFunction(() => document.querySelector('#siteTabs button.active').dataset.site === 'koseilyas');
+  check(JSON.stringify(await names5()) === JSON.stringify(['Ali Köse', 'Mehmet', 'Zeki']), 'ortak liste: Köseilyas sekmesinde de aynı kişiler');
+  await p5.locator('#siteTabs [data-site="gundogdu"]').click();
+  await p5.waitForFunction(() => document.querySelector('#siteTabs button.active').dataset.site === 'gundogdu');
+  const until5 = async (fn, ms = 10000) => { const t = Date.now(); while (Date.now() - t < ms) { if (fn()) return true; await p5.waitForTimeout(100); } return false; };
+  check(await until5(() => rec5.some((b) => b.action === 'saveRoster')), 'göç sonrası saveRoster gönderildi');
+  const rosterCalls = rec5.filter((b) => b.action === 'getRoster' || b.action === 'saveRoster');
+  check(rosterCalls.length > 0 && rosterCalls.every((b) => b.site === 'gundogdu'), 'yalnız gundogdu ile getRoster/saveRoster: ' + rosterCalls.map((b) => b.action + ':' + b.site).join(','));
+  const sv = (srv5.rosters.gundogdu || []).flatMap((t) => t.members);
+  check(['Zeki', 'Mehmet', 'Ali Köse'].every((n) => sv.includes(n)), 'sunucuya tüm isimler gitti: ' + JSON.stringify(srv5.rosters.gundogdu));
+  // (b) İthal sonda
+  const kalip = p5.locator('#chips section.team', { has: p5.locator('h3', { hasText: /^Kalıp$/ }) });
+  await p5.waitForFunction(() => document.getElementById('pendingCount').textContent === '0', null, { timeout: 15000 });
+  await p5.waitForTimeout(800);
+  await kalip.locator('form.teamadd input').fill('Ahmet İthal');
+  await kalip.locator('form.teamadd button').click();
+  await p5.waitForSelector('#chips .chip[data-name="Ahmet İthal"]');
+  const order = await kalip.locator('.chip').evaluateAll((a) => a.map((x) => x.dataset.name));
+  check(order.join('|') === 'Zeki|Mehmet|Ahmet İthal', 'İthal olan listenin sonunda: ' + order.join('|'));
+  // (c) Sigorta çıkışı
+  await p5.click('#btnSettings');
+  const ts5 = p5.locator('#teamSettings .tset', { has: p5.locator('input[value="Kalıp"]') });
+  const mrows = await ts5.locator('.mname').evaluateAll((a) => a.map((x) => x.textContent));
+  check(mrows.join('|') === 'Zeki|Mehmet|Ahmet İthal', 'Ayarlar listesinde de İthal sonda: ' + mrows.join('|'));
+  await ts5.locator('button[data-arch="Zeki"]').click();
+  check((await p5.locator('#teamSettings button[data-archyes]').count()) === 1 && (await p5.locator('#teamSettings .mname', { hasText: 'Zeki' }).count()) === 1, 'çıkış için ikinci adım, henüz taşınmadı');
+  await ts5.locator('button[data-archyes="Zeki"]').click();
+  check((await p5.locator('#teamSettings .tset:not(.arsiv) .mname', { hasText: 'Zeki' }).count()) === 0, 'Zeki normal ekip listesinde yok');
+  check((await p5.locator('#teamSettings .tset:not(.arsiv)').count()) === 2, 'Arşiv ekibi normal ekip olarak listelenmedi');
+  const ar = p5.locator('#teamSettings .arsiv');
+  check((await p5.locator('#teamSettings h3', { hasText: 'Arşiv (sigorta çıkışı yapılanlar)' }).count()) === 1 && (await ar.locator('.mname', { hasText: 'Zeki' }).count()) === 1, 'Zeki Arşiv bölümünde');
+  const tr5 = tIso5.split('-').reverse().join('.');
+  check((await ar.textContent()).includes('Çıkış: ' + tr5), 'çıkış tarihi gösterildi: ' + (await ar.textContent()));
+  check((await p5.locator('#teamSettings select option', { hasText: 'Arşiv' }).count()) === 0, 'taşı listesinde Arşiv seçeneği yok');
+  await p5.click('#closeSettings');
+  check((await p5.locator('#chips .chip[data-name="Zeki"]').count()) === 0 && (await p5.locator('#chips h3', { hasText: 'Arşiv' }).count()) === 0, 'Zeki ana ekranda yok, Arşiv ekibi ana ekranda yok');
+  check(await until5(() => (srv5.rosters.gundogdu || []).some((t) => t.name === 'Arşiv (sigorta çıkışı)' && t.hidden === true && t.members.includes('Zeki'))), 'saveRoster: Arşiv ekibi hidden:true ve Zeki içinde: ' + JSON.stringify(srv5.rosters.gundogdu));
+  check(!(srv5.rosters.gundogdu.find((t) => t.name === 'Kalıp').members.includes('Zeki')), 'Zeki Kalıp ekibinden çıktı');
+  // geçmiş gün: kaydı olan arşivli kişi görünür (gundogdu için kayıt ekle)
+  await p5.click('#prevDay');
+  await p5.waitForFunction(() => /^Bu gün/.test(document.getElementById('summary').textContent));
+  check((await p5.locator('#chips .chip[data-name="Zeki"]').count()) === 0, 'geçmiş günde kaydı olmayan arşivli kişi görünmez');
+  await p5.locator('#siteTabs [data-site="koseilyas"]').click();
+  await p5.waitForSelector('#chips .chip.full[data-name="Zeki"]', { timeout: 10000 });
+  check((await p5.locator('#chips section.hiddengrp .chip[data-name="Zeki"]').count()) === 1, 'geçmiş günde kaydı olan arşivli kişi "Gizli ekipten" altında görünür');
+  await p5.click('#nextDay');
+  // Geri al
+  await p5.click('#btnSettings');
+  await p5.locator('#teamSettings button[data-restore="Zeki"]').click();
+  await p5.click('#closeSettings');
+  check((await p5.locator('#chips section.team', { has: p5.locator('h3', { hasText: /^Kalıp$/ }) }).locator('.chip[data-name="Zeki"]').count()) === 1, 'Geri al: Zeki Kalıp ekibine döndü');
+  check(await until5(() => (srv5.rosters.gundogdu.find((t) => t.name === 'Kalıp').members || []).includes('Zeki')), 'geri alma sunucuya gitti');
+  check(errs5.length === 0, 'ortak liste/arşiv testinde sayfa hatası yok' + (errs5.length ? ': ' + errs5.join(' | ') : ''));
+  await ctx5.close();
+}
+
 // Çevrimdışı: istekler iptal
 await page.unroute(GAS);
 await page.route(GAS, (route) => route.abort('failed'));

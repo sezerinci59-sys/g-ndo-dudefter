@@ -88,8 +88,8 @@ function shortDate(s) {
 const fmtNum = (n) => String(n).replace('.', ',');
 
 // ---------- Durum ----------
-const state = { site: null, date: today(), day: null, teams: [], members: [], pulled: false };
-const ui = { hideTeam: null, delName: null, closed: new Set() };
+const state = { site: null, date: today(), day: null, teams: [], members: [], pulled: false, rosterLoaded: false };
+const ui = { hideTeam: null, delName: null, archName: null, closed: new Set() };
 let photoUrls = [];
 
 function toast(msg, ms = 2800) {
@@ -106,21 +106,54 @@ async function loadDay() {
 }
 const newId = () => 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 const EKIPSIZ = 'Ekipsiz';
-// Eski biçim {site, list:[ad]} -> yeni biçim {site, teams, members}; kayıp yok, otomatik.
+// Tek ortak ekip listesi (iki şantiye için). Eski şantiye başına kayıtlar ilk açılışta birleştirilir.
+const ROSTER_KEY = 'ortak', SYNC_SITE = 'gundogdu', ARSIV = 'Arşiv (sigorta çıkışı)';
+const lcTr = (s) => s.toLocaleLowerCase('tr');
+const isArsiv = (t) => lcTr(t.name) === lcTr(ARSIV);
+const isIthal = (n) => /(^|[^\p{L}])ithal($|[^\p{L}])/u.test(lcTr(n).replace(/ı/g, 'i'));
+// Aynı ekipte "İthal" olanlar sona; diğerlerinin göreli sırası korunur.
+const orderMembers = (arr) => [...arr.filter((m) => !isIthal(m.name)), ...arr.filter((m) => isIthal(m.name))];
+const teamMembers = (id) => orderMembers(state.members.filter((m) => m.teamId === id));
+const shownTeams = () => state.teams.filter((t) => !t.hidden && !isArsiv(t));
+async function readShared() {
+  const rec = await dbGet('names', ROSTER_KEY);
+  if (rec && Array.isArray(rec.teams)) return { teams: rec.teams, members: rec.members || [], pulled: !!rec.pulled };
+  const r = { teams: [], members: [], pulled: false };
+  let found = false;
+  for (const site of Object.keys(SITES)) {
+    const o = await dbGet('names', site); if (!o) continue;
+    let teams = [], members = [];
+    if (Array.isArray(o.teams)) { teams = o.teams; members = o.members || []; }
+    else if (Array.isArray(o.list) && o.list.length) {
+      const id = newId(); teams = [{ id, name: EKIPSIZ, hidden: false }]; members = o.list.map((name) => ({ name, teamId: id }));
+    }
+    for (const t of teams) {
+      let x = r.teams.find((q) => lcTr(q.name) === lcTr(t.name));
+      if (!x) { x = { id: newId(), name: t.name, hidden: !!t.hidden }; r.teams.push(x); }
+      else x.hidden = x.hidden && !!t.hidden;
+      for (const m of members.filter((q) => q.teamId === t.id)) {
+        if (!r.members.some((q) => lcTr(q.name) === lcTr(m.name))) r.members.push({ name: m.name, teamId: x.id });
+      }
+    }
+    // takımsız artık isimler de kaybolmasın
+    for (const m of members) {
+      if (!teams.some((t) => t.id === m.teamId) && !r.members.some((q) => lcTr(q.name) === lcTr(m.name))) {
+        let e = r.teams.find((q) => q.name === EKIPSIZ);
+        if (!e) { e = { id: newId(), name: EKIPSIZ, hidden: false }; r.teams.push(e); }
+        r.members.push({ name: m.name, teamId: e.id });
+      }
+    }
+    found = true;
+  }
+  if (found) {
+    await saveRosterData(r);
+    if (r.teams.length) await enqueueRoster();
+  }
+  return r;
+}
 async function loadNames() {
-  const rec = await dbGet('names', state.site);
-  if (rec && Array.isArray(rec.teams)) {
-    state.teams = rec.teams; state.members = rec.members || []; state.pulled = !!rec.pulled;
-    return;
-  }
-  state.teams = []; state.members = []; state.pulled = false;
-  const list = (rec && Array.isArray(rec.list)) ? rec.list : [];
-  if (list.length) {
-    const id = newId();
-    state.teams.push({ id, name: EKIPSIZ, hidden: false });
-    state.members = list.map((name) => ({ name, teamId: id }));
-    await saveNames();
-  }
+  const r = await readShared();
+  state.teams = r.teams; state.members = r.members; state.pulled = r.pulled; state.rosterLoaded = true;
 }
 function ensureEkipsiz() {
   let t = state.teams.find((x) => x.name === EKIPSIZ);
@@ -141,21 +174,21 @@ async function persistDay(day, what = {}) {
   refreshBanner();
   scheduleSync();
 }
-async function saveRosterData(site, r) {
-  await dbPut('names', { site, teams: r.teams, members: r.members, list: r.members.map((m) => m.name), pulled: !!r.pulled });
+async function saveRosterData(r) {
+  await dbPut('names', { site: ROSTER_KEY, teams: r.teams, members: r.members, list: r.members.map((m) => m.name), pulled: !!r.pulled });
 }
-const saveNames = () => saveRosterData(state.site, state);
-// Yerel ekip/isim değişikliği: kaydet ve sunucuya gönderilmek üzere sıraya al (site başına tek kayıt).
+const saveNames = () => saveRosterData(state);
+// Yerel ekip/isim değişikliği: kaydet ve sunucuya gönderilmek üzere sıraya al (tek ortak kayıt; sunucuda Gündoğdu sayfası ana liste).
 const rosterDirty = new Set();
 let rosterRev = 0;
-async function enqueueRoster(site) {
-  rosterDirty.add(site);
-  await dbPut('queue', { id: `roster|${site}`, type: 'saveRoster', site, rev: Date.now() + '.' + (++rosterRev) });
+async function enqueueRoster() {
+  rosterDirty.add(SYNC_SITE);
+  await dbPut('queue', { id: `roster|${SYNC_SITE}`, type: 'saveRoster', site: SYNC_SITE, rev: Date.now() + '.' + (++rosterRev) });
   refreshBanner(); scheduleSync();
 }
 async function persistRoster() {
-  const site = state.site; rosterDirty.add(site);
-  await saveNames(); await enqueueRoster(site);
+  rosterDirty.add(SYNC_SITE);
+  await saveNames(); await enqueueRoster();
 }
 
 // ---------- Çizim ----------
@@ -185,14 +218,14 @@ function renderChips() {
   const box = $('chips'); box.textContent = '';
   const att = state.day.attendance;
   const label = state.date === today() ? 'Bugün' : 'Bu gün';
-  const visible = state.teams.filter((t) => !t.hidden);
+  const visible = shownTeams();
   if (!visible.length) {
     const p = document.createElement('div'); p.className = 'hint';
     p.textContent = 'Henüz ekip yok. Aşağıdan "+ Yeni ekip" ile ekleyin.';
     box.appendChild(p);
   }
   for (const t of visible) {
-    const mem = state.members.filter((m) => m.teamId === t.id);
+    const mem = teamMembers(t.id);
     const present = mem.filter((m) => att[m.name] > 0).length;
     const sec = document.createElement('section'); sec.className = 'team'; sec.dataset.team = t.id; sec.style.setProperty('--tc', teamColor(t.name));
     const head = document.createElement('div'); head.className = 'team-head';
@@ -302,7 +335,7 @@ async function selectSite(site) {
   state.site = site; ls.set('sd_site', site);
   await renderAll();
   $('picker').hidden = true;
-  pullDay(); pullRoster(site);
+  pullDay(); pullRoster();
 }
 async function setDate(date) {
   if (!date) return;
@@ -419,14 +452,15 @@ function renderTeamSettings() {
     const w = el('div', { className: 'tset', 'data-tset': t.id });
     const nm = el('input', { type: 'text', value: t.name, 'aria-label': 'Ekip adı' }); nm.dataset.tname = t.id; nm.setAttribute('value', t.name);
     w.appendChild(el('div', { className: 'tset-row' }, nm, btn('Adı kaydet', { 'data-trename': t.id })));
-    const mem = state.members.filter((m) => m.teamId === t.id);
+    const mem = teamMembers(t.id);
     const det = el('details', { className: 'tmembers' }, el('summary', { text: `Kişiler (${mem.length})` }));
     for (const m of mem) {
       const sel = el('select', { 'aria-label': m.name + ' ekibi' }); sel.dataset.move = m.name;
-      for (const o of state.teams) sel.appendChild(el('option', { value: o.id, text: o.name + (o.hidden ? ' (gizli)' : ''), selected: o.id === m.teamId }));
+      for (const o of state.teams.filter((q) => !isArsiv(q))) sel.appendChild(el('option', { value: o.id, text: o.name + (o.hidden ? ' (gizli)' : ''), selected: o.id === m.teamId }));
       const row = el('div', { className: 'mrow' }, el('span', { className: 'mname', text: m.name }), sel);
-      if (ui.delName === m.name) row.append(btn('Evet, sil', { 'data-delyes': m.name }, 'btn small danger'), btn('Vazgeç', { 'data-delno': '1' }));
-      else row.append(btn('Sil', { 'data-del': m.name }));
+      if (ui.archName === m.name) row.append(btn('Evet, çıkış yap', { 'data-archyes': m.name }, 'btn small danger'), btn('Vazgeç', { 'data-archno': '1' }));
+      else if (ui.delName === m.name) row.append(btn('Evet, sil', { 'data-delyes': m.name }, 'btn small danger'), btn('Vazgeç', { 'data-delno': '1' }));
+      else row.append(btn('Sigorta çıkışı', { 'data-arch': m.name }, 'btn small'), btn('Sil', { 'data-del': m.name }, 'btn small linkdel'));
       det.appendChild(row);
     }
     det.open = !ui.closed.has(t.id); det.dataset.tid = t.id;
@@ -436,12 +470,25 @@ function renderTeamSettings() {
     else w.appendChild(btn('Ekibi gizle (işi bitti)', { 'data-hide': t.id }));
     return w;
   };
-  const vis = state.teams.filter((t) => !t.hidden), hid = state.teams.filter((t) => t.hidden);
+  const vis = shownTeams(), hid = state.teams.filter((t) => t.hidden && !isArsiv(t));
   if (!vis.length) box.appendChild(el('p', { className: 'hint', text: 'Görünen ekip yok.' }));
   vis.forEach((t) => box.appendChild(teamBlock(t)));
   if (hid.length) {
     box.appendChild(el('h3', { text: 'Gizli ekipler' }));
     hid.forEach((t) => box.appendChild(teamBlock(t)));
+  }
+  const at = state.teams.find(isArsiv);
+  const arch = at ? state.members.filter((m) => m.teamId === at.id) : [];
+  if (arch.length) {
+    const info = ls.get('sd_arsiv', {}) || {};
+    box.appendChild(el('h3', { text: 'Arşiv (sigorta çıkışı yapılanlar)' }));
+    const wrap = el('div', { className: 'tset arsiv' });
+    for (const m of arch) {
+      const d = info[m.name] && info[m.name].date;
+      wrap.appendChild(el('div', { className: 'mrow' }, el('span', { className: 'mname', text: m.name }),
+        el('span', { className: 'hint', text: d ? 'Çıkış: ' + trDate(d) : '' }), btn('Geri al', { 'data-restore': m.name })));
+    }
+    box.appendChild(wrap);
   }
 }
 $('teamSettings').addEventListener('click', async (e) => {
@@ -458,7 +505,34 @@ $('teamSettings').addEventListener('click', async (e) => {
     if (state.teams.some((q) => q !== x && q.name.toLocaleLowerCase('tr') === v.toLocaleLowerCase('tr'))) return toast('Bu ekip zaten var.');
     x.name = v; changed = true; toast('Ekip adı değişti.');
   }
-  else if (d.del) { ui.delName = d.del; }
+  else if (d.arch) { ui.archName = d.arch; ui.delName = null; }
+  else if (d.archno) { ui.archName = null; }
+  else if (d.archyes) {
+    const m = state.members.find((q) => q.name === d.archyes);
+    if (m) {
+      const from = state.teams.find((q) => q.id === m.teamId);
+      let at = state.teams.find(isArsiv);
+      if (!at) { at = { id: newId(), name: ARSIV, hidden: true }; state.teams.push(at); } else at.hidden = true;
+      if (from && !isArsiv(from)) {
+        const info = ls.get('sd_arsiv', {}) || {};
+        info[m.name] = { date: state.date, team: from.name }; ls.set('sd_arsiv', info);
+      }
+      m.teamId = at.id; changed = true; toast('Sigorta çıkışı yapıldı; Arşiv bölümüne taşındı.');
+    }
+    ui.archName = null;
+  }
+  else if (d.restore) {
+    const m = state.members.find((q) => q.name === d.restore);
+    if (m) {
+      const info = ls.get('sd_arsiv', {}) || {};
+      const want = info[m.name] && info[m.name].team;
+      let t = want && state.teams.find((q) => !isArsiv(q) && lcTr(q.name) === lcTr(want));
+      if (!t) t = shownTeams()[0];
+      if (!t) { t = { id: newId(), name: 'Kalıpçı', hidden: false }; state.teams.push(t); }
+      m.teamId = t.id; delete info[m.name]; ls.set('sd_arsiv', info); changed = true; toast('Geri alındı.');
+    }
+  }
+  else if (d.del) { ui.delName = d.del; ui.archName = null; }
   else if (d.delno) { ui.delName = null; }
   else if (d.delyes) { state.members = state.members.filter((m) => m.name !== d.delyes); ui.delName = null; changed = true; }
   else return;
@@ -746,15 +820,16 @@ async function sync(manual = false) {
     for (const q of await dbAll('queue')) {
       if (q.type === 'saveRoster') {
         try {
-          const r = await loadRoster(q.site);
+          if (q.site !== SYNC_SITE) { await dbDel('queue', q.id); continue; } // eski şantiye başına kayıt: ortak listeye taşındı
+          const r = await loadRoster();
           if (!r.teams.length) { await dbDel('queue', q.id); rosterDirty.delete(q.site); continue; } // hiç ekip yok: sunucuyu boşaltma
           if (!r.pulled) { // sunucudakini hiç görmeden üzerine yazma: önce çek ve birleştir
-            const d = await post({ action: 'getRoster', site: q.site });
+            const d = await post({ action: 'getRoster', site: SYNC_SITE });
             mergeServerRoster(r, d.teams || []); r.pulled = true;
-            await saveRosterData(q.site, r);
-            if (q.site === state.site) { renderChips(); if (!$('settings').hidden) renderTeamSettings(); }
+            await saveRosterData(r);
+            if (r === state) { renderChips(); if (!$('settings').hidden) renderTeamSettings(); }
           }
-          await post({ action: 'saveRoster', site: q.site, teams: toServerTeams(r) });
+          await post({ action: 'saveRoster', site: SYNC_SITE, teams: toServerTeams(r) });
           const cur = await dbGet('queue', q.id);
           if (cur && cur.rev === q.rev) { await dbDel('queue', q.id); rosterDirty.delete(q.site); }
         } catch (err) {
@@ -817,26 +892,17 @@ async function sync(manual = false) {
 let syncTimer;
 function scheduleSync(ms = 1500) { clearTimeout(syncTimer); syncTimer = setTimeout(() => sync(), ms); }
 $('syncNow').addEventListener('click', () => sync(true));
-window.addEventListener('online', () => { sync(); pullDay(); if (state.site) pullRoster(state.site); });
+window.addEventListener('online', () => { sync(); pullDay(); pullRoster(); });
 setInterval(() => { if (document.visibilityState === 'visible') sync(); }, 60000);
 
 // ---------- Sunucudan çekme (Drive > telefon) ----------
 const canPull = () => navigator.onLine && !!(getSettings().url && getSettings().key);
 const isUnknownAction = (err) => err && err.server && /unknown action|Bilinmeyen işlem/i.test(err.message);
-async function loadRoster(site) {
-  if (site === state.site) return state;
-  const rec = await dbGet('names', site);
-  if (rec && Array.isArray(rec.teams)) return { teams: rec.teams, members: rec.members || [], pulled: !!rec.pulled };
-  const r = { teams: [], members: [], pulled: false };
-  const list = (rec && Array.isArray(rec.list)) ? rec.list : [];
-  if (list.length) { const id = newId(); r.teams.push({ id, name: EKIPSIZ, hidden: false }); r.members = list.map((name) => ({ name, teamId: id })); }
-  return r;
-}
+const loadRoster = async () => state.rosterLoaded ? state : readShared();
 const normName = (s) => String(s == null ? '' : s).trim().replace(/\s+/g, ' ');
-const lcTr = (s) => s.toLocaleLowerCase('tr');
 const toServerTeams = (r) => r.teams.map((t) => ({ name: t.name, hidden: !!t.hidden, members: r.members.filter((m) => m.teamId === t.id).map((m) => m.name) }));
 // Sunucudaki ekipleri yerele ekler (hiçbir şey silmez). Dönüş: {changed, push}
-function mergeServerRoster(r, serverTeams) {
+function mergeServerRoster(r, serverTeams, moveArchived = false) {
   let changed = false;
   const findTeam = (name) => r.teams.find((t) => lcTr(t.name) === lcTr(name));
   const srv = [];
@@ -848,7 +914,9 @@ function mergeServerRoster(r, serverTeams) {
     for (const mn of (st.members || [])) {
       const n = normName(mn); if (!n) continue;
       names.push(lcTr(n));
-      if (!r.members.some((m) => lcTr(m.name) === lcTr(n))) { r.members.push({ name: n, teamId: t.id }); changed = true; }
+      const ex = r.members.find((m) => lcTr(m.name) === lcTr(n));
+      if (!ex) { r.members.push({ name: n, teamId: t.id }); changed = true; }
+      else if (moveArchived && isArsiv(t) && ex.teamId !== t.id) { ex.teamId = t.id; changed = true; }
     }
     srv.push({ key: lcTr(name), hidden: !!st.hidden, names: new Set(names) });
   }
@@ -860,24 +928,24 @@ function mergeServerRoster(r, serverTeams) {
   }
   return { changed, push };
 }
-async function pullRoster(site) {
-  if (!site || !canPull()) return;
+async function pullRoster() {
+  if (!canPull()) return;
   let data;
-  try { data = await post({ action: 'getRoster', site }); }
+  try { data = await post({ action: 'getRoster', site: SYNC_SITE }); }
   catch (err) { if (isUnknownAction(err)) { needUpdate = true; setError(UPDATE_MSG); refreshBanner(); } return; }
   if (!data || !Array.isArray(data.teams)) return;
   try { localStorage.setItem('sd_server_v2', '1'); } catch { /* yoksay */ }
   needUpdate = false; if (lastError === UPDATE_MSG) { setError(''); refreshBanner(); }
-  const r = await loadRoster(site);
-  if (rosterDirty.has(site) || await dbGet('queue', `roster|${site}`)) { scheduleSync(); return; } // yerel değişiklik önce gider
-  const { changed, push } = mergeServerRoster(r, data.teams);
+  const r = await loadRoster();
+  if (rosterDirty.has(SYNC_SITE) || await dbGet('queue', `roster|${SYNC_SITE}`)) { scheduleSync(); return; } // yerel değişiklik önce gider
+  const { changed, push } = mergeServerRoster(r, data.teams, true);
   const first = !r.pulled; r.pulled = true;
-  if (changed || first) await saveRosterData(site, r);
-  if (site === state.site) {
+  if (changed || first) await saveRosterData(r);
+  if (r === state) {
     if (changed) renderChips();
     if (changed && !$('settings').hidden) renderTeamSettings();
   }
-  if (push) await enqueueRoster(site);
+  if (push) await enqueueRoster();
 }
 async function pullDay() {
   const site = state.site, date = state.date;
@@ -934,8 +1002,8 @@ function openSettings() {
   renderLog();
   renderSurum();
   const s = getSettings(); $('setUrl').value = s.url; $('setKey').value = s.key;
-  $('testResult').textContent = ''; ui.hideTeam = null; ui.delName = null; renderTeamSettings(); renderLocInfo(); $('settings').hidden = false;
-  if (state.site) pullRoster(state.site);
+  $('testResult').textContent = ''; ui.hideTeam = null; ui.delName = null; ui.archName = null; renderTeamSettings(); renderLocInfo(); $('settings').hidden = false;
+  pullRoster();
 }
 function readSettingsForm() { ls.set('sd_settings', { url: $('setUrl').value.trim(), key: $('setKey').value.trim() }); }
 function autoSaveSettings() { readSettingsForm(); $('testResult').textContent = 'Kaydedildi ✓'; }
@@ -955,7 +1023,7 @@ $('testConn').addEventListener('click', async () => {
     try { localStorage.setItem('sd_server_v2', '1'); } catch { /* yoksay */ }
     out.textContent = 'Bağlantı başarılı. Apps Script: GÜNCEL ✔';
     needUpdate = false; if (lastError === UPDATE_MSG) setError(''); refreshBanner();
-    if (state.site) pullRoster(state.site);
+    pullRoster();
   } catch (e) {
     out.textContent = isUnknownAction(e)
       ? "Bağlantı var ama Apps Script ESKİ sürümde çalışıyor. Dağıt → Dağıtımları yönet → kalem → Sürüm: 'Yeni sürüm' → Dağıt."

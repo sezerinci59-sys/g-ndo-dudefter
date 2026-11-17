@@ -1,5 +1,6 @@
 // Sürüm notları — her güncellemede en üste yeni satır eklenir.
 export const SURUMLER = [
+  { v: '2.5', t: '18.11.2026', n: ['Tek ekip listesi: iki şantiyede aynı kişiler görünür (puantaj yine şantiyeye göre ayrı).', '"İthal" olanlar listenin sonunda.', 'Başlıktaki beyaz parlama kaldırıldı, yazı daha okunaklı.', 'Ayarlar > Ekipler: "Sigorta çıkışı" — kişi silinmez, Arşiv bölümüne gider, "Geri al" ile döner.'] },
   { v: '2.4', t: '18.11.2026', n: ['Ayarlar > Kayıt defteri: Drive ile yapılan her işlem (başarılı/hata) kaydedilir; "Kopyala" ile paylaşılabilir. Anahtar ve fotoğraf içeriği yazılmaz.'] },
   { v: '2.3', t: '18.11.2026', n: ['Gereksiz bilgi kutusu gizlenir; Apps Script uyarısı artık sadece Ayarlar\'da görünür.', '"Bağlantıyı test et" artık Apps Script\'in güncel mi eski mi olduğunu da söyler.'] },
   { v: '2.2', t: '18.11.2026', n: ['Başlık çubuğu ve alt sekmelerdeki beyaz parlama efekti en aza indirildi.'] },
