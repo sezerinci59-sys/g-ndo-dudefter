@@ -1,7 +1,7 @@
 :root{
   --bg:#f0eee4; --card:#fff; --text:#111; --muted:#4a4a4a; --line:#9aa7b4; --edge:#8ea6bf;
   --blue:#0b4fb8; --danger:#a00000; --chip:#fff; --full:#2f8a2f; --half:#e3a21a;
-  --glass:linear-gradient(180deg,rgba(255,255,255,.75) 0,rgba(255,255,255,.18) 48%,rgba(255,255,255,0) 50%,rgba(255,255,255,.12) 100%),linear-gradient(#5aa9e6,#2d78c8 55%,#1f64b4);
+  --glass:linear-gradient(180deg,rgba(255,255,255,.12) 0,rgba(255,255,255,.04) 48%,rgba(255,255,255,0) 50%,rgba(255,255,255,.04) 100%),linear-gradient(#5aa9e6,#2d78c8 55%,#1f64b4);
   --btn:linear-gradient(#f6f6f6 0,#ececec 49%,#dddddd 50%,#cfcfcf 100%);
   --btnhov:linear-gradient(#eaf6fd 0,#d9f0fc 49%,#bee6fd 50%,#a7d9f5 100%);
   --btnact:linear-gradient(#e5f1fb 0,#cce4f7 49%,#b4d6f2 50%,#a0cbec 100%);

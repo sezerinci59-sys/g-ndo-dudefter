@@ -1,5 +1,6 @@
 // Sürüm notları — her güncellemede en üste yeni satır eklenir.
 export const SURUMLER = [
+  { v: '2.2', t: '18.11.2026', n: ['Başlık çubuğu ve alt sekmelerdeki beyaz parlama efekti en aza indirildi.'] },
   { v: '2.1', t: '18.11.2026', n: ['Tasarım: Windows XP ve Windows 7 karışımı (cam başlık ve alt sekmeler, parlak düğmeler).', 'Ekip başlığı kartın iki kenarına kadar uzanır, ekip adı tam ortada.'] },
   { v: '2.0', t: '18.11.2026', n: ['Başlık: "İmatek Şantiye Defteri".', 'Bekleyen öğe yoksa bildirim kutusu gizlenir.', 'Seçili şantiye sekmesi belirgin; tarih tek satır.', 'Yeni: "Malzeme girişi" — flaş açık seri çekim, fotoğraflar İrsaliye_gg.aa.yyyy_n adıyla o güne kaydedilir.'] },
   { v: '1.9', t: '18.11.2026', n: ['Yeni görünüm: Windows XP tarzı, açık tema, Tahoma/Verdana yazı tipi.', 'Ekip başlıkları ortada ve her ekip kendi renginde.', 'Gündoğdu / Köseilyas sekmeleri ekranın altına sabitlendi.'] },
