@@ -5,6 +5,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
+import { createGas } from './gas-sim.mjs';
 
 const require = createRequire(import.meta.url);
 let chromium;
@@ -36,24 +37,33 @@ const errors = [];
 page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text() + ' @' + (m.location().url||'')); });
 page.on('pageerror', (e) => errors.push('pageerror: ' + e.message));
 
-// Durumlu sahte sunucu: şantiye başına ekip listesi ve gün kayıtları (bellekte)
-const newSrv = () => ({ rosters: {}, days: {}, unknown: new Set() });
-let fileSeq = 0;
-function serverReply(srv, body) {
-  if (srv.unknown.has(body.action)) return { ok: false, error: 'unknown action: ' + body.action };
-  switch (body.action) {
-    case 'getRoster': return { ok: true, teams: srv.rosters[body.site] || [] };
-    case 'saveRoster': srv.rosters[body.site] = body.teams; return { ok: true };
-    case 'getDay': { const d = srv.days[body.site + '|' + body.date] || { attendance: {}, note: '' }; return { ok: true, attendance: d.attendance, note: d.note }; }
-    case 'saveDay': {
-      const k = body.site + '|' + body.date; const d = srv.days[k] || (srv.days[k] = { attendance: {}, note: '' });
-      if ('attendance' in body) d.attendance = body.attendance;
-      if ('note' in body) d.note = body.note;
-      return { ok: true };
+// Durumlu sahte sunucu: gerçek apps-script/Code.gs, bellekteki sahte E-Tablo/Drive ile (test/gas-sim.mjs)
+// old = true: 3.0 öncesi Apps Script taklidi (yeni işlemleri ve alanları bilmez)
+function newSrv() {
+  const gas = createGas();
+  const srv = { gas, unknown: new Set(), old: false };
+  srv.reply = (body) => {
+    const b = { ...body }; delete b.key;
+    if (srv.unknown.has(b.action)) return { ok: false, error: 'unknown action: ' + b.action };
+    if (srv.old) {
+      if (['getRoster2', 'saveRoster2', 'getMeta', 'saveMeta'].includes(b.action)) return { ok: false, error: 'unknown action: ' + b.action };
+      delete b.changes; delete b.noteUpdatedAt; delete b.kind; delete b.uid;
+      const r = gas.call(b); delete r.v; delete r.noteUpdatedAt; return r;
     }
-    default: return { ok: true, fileId: 'F' + (++fileSeq) };
-  }
+    return gas.call(b);
+  };
+  srv.seedDay = (site, date, attendance, note = '') => gas.call({ action: 'saveDay', site, date, attendance, note });
+  srv.day = (site, date) => gas.call({ action: 'getDay', site, date });
+  srv.seedRoster = (teams) => gas.call({ action: 'saveRoster', site: 'gundogdu', teams });
+  srv.roster = () => gas.call({ action: 'getRoster', site: 'gundogdu' }).teams; // görünen liste (eski biçim)
+  srv.meta = () => gas.call({ action: 'getMeta' }).items;
+  srv.photoNames = (site, trDate) => {
+    const root = gas.folders.get(site === 'gundogdu' ? '1PnWIRJRoiC4DauFzMnSJqoCX0hXDUWZ9' : '1atlqBgNzuRbUCiomprLghf27MluqsM-2');
+    const f = root.folders.find((x) => x.name === trDate); return f ? f.files.map((x) => x.name) : [];
+  };
+  return srv;
 }
+const serverReply = (srv, body) => srv.reply(body);
 const srv = newSrv();
 const received = [];
 let mockMode = 'ok', deleteReply = null;
@@ -116,11 +126,14 @@ await page.waitForFunction(() => document.getElementById('pendingCount').textCon
 
 const saveDay = received.filter((r) => r.body.action === 'saveDay');
 const lastSave = saveDay[saveDay.length - 1];
-const vals = lastSave ? Object.values(lastSave.body.attendance).sort() : [];
+const DAY0 = lastSave && lastSave.body.date;
+const srvDay0 = () => srv.day('gundogdu', DAY0);
+const vals = Object.values(srvDay0().attendance).sort();
 check(saveDay.length >= 1, `saveDay isteği alındı (${saveDay.length})`);
-check(JSON.stringify(vals) === '[0.5,1]', 'attendance değerleri 1 ve 0.5: ' + JSON.stringify(lastSave && lastSave.body.attendance));
+check(JSON.stringify(vals) === '[0.5,1]', 'sunucuda puantaj 1 ve 0.5: ' + JSON.stringify(srvDay0().attendance));
+check(saveDay.every((r) => !('attendance' in r.body)) && saveDay.some((r) => r.body.changes && r.body.changes['Ali Veli'] === 1), '3.0: saveDay yalnız değişen kişileri (changes) gönderir: ' + JSON.stringify(saveDay.map((r) => r.body.changes)));
 check(lastSave && lastSave.body.site === 'gundogdu' && /^\d{4}-\d{2}-\d{2}$/.test(lastSave.body.date), 'site ve tarih doğru');
-check(lastSave && lastSave.body.note.includes('Beton'), 'not gönderildi');
+check(srvDay0().note.includes('Beton') && saveDay.some((r) => r.body.note && r.body.noteUpdatedAt > 0), 'not zaman damgasıyla gönderildi');
 check(lastSave && lastSave.body.key === 'testkey', 'anahtar gönderildi');
 check(received.every((r) => /^text\/plain/.test(r.ct || '')), 'Content-Type text/plain (ön kontrol yok)');
 const up = received.filter((r) => r.body.action === 'uploadPhoto');
@@ -160,9 +173,11 @@ check(/2\/2/.test(await teamSec('Kalıp').locator('.team-count').textContent()),
 check((await teamSec('Beton').locator('.chip.full, .chip.half').count()) === 2, 'Beton ekibi etkilenmedi');
 await page.evaluate(() => document.getElementById('syncNow').click());
 await page.waitForFunction(() => document.getElementById('pendingCount').textContent === '0', null, { timeout: 15000 });
-const sd2 = received.filter((r) => r.body.action === 'saveDay').pop().body.attendance;
+const sd2 = srvDay0().attendance;
 check(sd2['Can'] === 1 && sd2['Deniz'] === 1 && sd2['Ali Veli'] === 1 && sd2['Ayşe Yılmaz'] === 0.5 && Object.keys(sd2).length === 4,
-  'saveDay payload Hepsi geldi sonrası: ' + JSON.stringify(sd2));
+  'sunucu Hepsi geldi sonrası: ' + JSON.stringify(sd2));
+const lastCh = received.filter((r) => r.body.action === 'saveDay').pop().body.changes || {};
+check(lastCh.Can === 1 && lastCh.Deniz === 1 && !('Ali Veli' in lastCh), 'Hepsi geldi: yalnız o ekip gönderildi: ' + JSON.stringify(lastCh));
 
 // Ayarlar > Ekipler: gizle (iki adımlı)
 await page.click('#btnSettings');
@@ -344,6 +359,9 @@ await waitUntil(async () => (await page.locator('#photoGrid .photo .irs').count(
 await page.evaluate(() => document.getElementById('syncNow').click()); await settle();
 irs = received.filter((r) => r.body.action === 'uploadPhoto').slice(upB7).map((r) => r.body.name);
 check(JSON.stringify(irs) === JSON.stringify([`İrsaliye_${todayTr}_4.jpg`]), 'yedek yolda da irsaliye adı: ' + irs);
+const drvIrs = srv.photoNames('gundogdu', todayTr).filter((n) => n.startsWith('İrsaliye')).sort();
+check(JSON.stringify(drvIrs) === JSON.stringify([1, 2, 3, 4].map((i) => `İrsaliye_${todayTr}_${i}.jpg`)), "Drive'da irsaliye adları: " + drvIrs);
+check((await page.locator('#photoGrid .photo .irs', { hasText: /^İrsaliye 4$/ }).count()) === 1, 'gönderilen irsaliyede numara görünür');
 check(errors.length === 0, 'silme/kamera akışında konsol hatası yok' + (errors.length ? ': ' + errors.join(' | ') : ''));
 
 // ---- Göç testi: eski biçim ----
@@ -399,20 +417,21 @@ await ctx2.close();
     if (!localStorage.getItem('sd_settings')) { localStorage.setItem('sd_settings', JSON.stringify({ url, key: 'k' })); localStorage.setItem('sd_site', JSON.stringify('gundogdu')); }
   }, [GAS]);
   const yIso = await p4.evaluate(() => { const d = new Date(); d.setDate(d.getDate() - 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; });
-  srv4.rosters.gundogdu = [{ name: 'Kalıpçı', hidden: false, members: ['Sefa', 'Raskon'] }];
-  srv4.days['gundogdu|' + yIso] = { attendance: { Sefa: 1 }, note: 'Drive notu' };
+  srv4.seedRoster([{ name: 'Kalıpçı', hidden: false, members: ['Sefa', 'Raskon'] }]);
+  srv4.seedDay('gundogdu', yIso, { Sefa: 1 }, 'Drive notu');
   await p4.goto(base + 'index.html');
   const sec4 = p4.locator('#chips section.team', { has: p4.locator('h3', { hasText: /^Kalıpçı$/ }) });
   await p4.waitForSelector('#chips .chip[data-name="Raskon"]', { timeout: 10000 });
   check((await sec4.locator('.chip[data-name="Sefa"]').count()) === 1 && (await sec4.locator('.chip[data-name="Raskon"]').count()) === 1, 'sunucu ekibi: Sefa ve Raskon Kalıpçı altında göründü');
-  check(!rec4.some((b) => b.action === 'saveRoster'), 'sunucuyla aynı liste: saveRoster gönderilmedi');
+  check(!rec4.some((b) => b.action === 'saveRoster' || b.action === 'saveRoster2'), 'sunucuyla aynı liste: saveRoster2 gönderilmedi');
   const w4 = (fn, ms = 10000) => p4.waitForFunction(fn, null, { timeout: ms });
   // (2) yerel isim sunucuya gider
   await sec4.locator('form.teamadd input').fill('Yerel Usta');
   await sec4.locator('form.teamadd button').click();
   const until4 = async (fn, ms = 10000) => { const t = Date.now(); while (Date.now() - t < ms) { if (fn()) return true; await p4.waitForTimeout(100); } return false; };
-  check(await until4(() => (srv4.rosters.gundogdu[0].members || []).includes('Yerel Usta')), 'yerel isim saveRoster ile sunucuya gitti: ' + JSON.stringify(srv4.rosters.gundogdu));
-  check(srv4.rosters.gundogdu[0].members.includes('Sefa'), 'sunucudaki isimler korundu');
+  check(await until4(() => (srv4.roster()[0].members || []).includes('Yerel Usta')), 'yerel isim saveRoster2 ile sunucuya gitti: ' + JSON.stringify(srv4.roster()));
+  check(srv4.roster()[0].members.includes('Sefa'), 'sunucudaki isimler korundu');
+  check(rec4.some((b) => b.action === 'saveRoster2' && b.changes.some((c) => c.type === 'member' && c.name === 'Yerel Usta')) && !rec4.some((b) => b.action === 'saveRoster2' && b.changes.some((c) => c.name === 'Sefa')), 'saveRoster2 yalnız değişen kişiyi gönderdi');
   // (3) geçmiş gün sunucudan gelir
   await p4.click('#prevDay');
   await p4.waitForSelector('.chip.full[data-name="Sefa"]', { timeout: 10000 });
@@ -427,10 +446,10 @@ await ctx2.close();
   await p4.evaluate(() => document.getElementById('syncNow').click());
   await until4(() => rec4.some((b) => b.action === 'saveDay'));
   const sd4 = rec4.filter((b) => b.action === 'saveDay').pop();
-  check(sd4 && sd4.note === 'Drive notu, düzeltildi' && !('attendance' in sd4), 'yalnız not düzenlendi: saveDay attendance içermiyor: ' + JSON.stringify(sd4));
-  check(srv4.days['gundogdu|' + yIso].attendance.Sefa === 1, 'sunucudaki puantaj bozulmadı');
-  // (5) eski Apps Script
-  srv4.unknown.add('getRoster'); srv4.unknown.add('saveRoster');
+  check(sd4 && sd4.note === 'Drive notu, düzeltildi' && !('attendance' in sd4) && !('changes' in sd4), 'yalnız not düzenlendi: saveDay puantaj içermiyor: ' + JSON.stringify(sd4));
+  check(srv4.day('gundogdu', yIso).attendance.Sefa === 1, 'sunucudaki puantaj bozulmadı');
+  // (5) eski Apps Script (3.0 öncesi, ekip listesi de yok)
+  srv4.old = true; srv4.unknown.add('getRoster'); srv4.unknown.add('saveRoster');
   await p4.click('#nextDay');
   await p4.fill('#note', 'Bugün notu');
   await p4.waitForFunction(() => document.getElementById('noteState').textContent === 'Kaydedildi');
@@ -480,7 +499,7 @@ await ctx2.close();
     };
     localStorage.setItem('sd_settings', JSON.stringify({ url, key: 'k' })); localStorage.setItem('sd_site', JSON.stringify('gundogdu'));
   }), [yIso5, GAS]);
-  srv5.days['koseilyas|' + yIso5] = { attendance: { Zeki: 1 }, note: '' };
+  srv5.seedDay('koseilyas', yIso5, { Zeki: 1 });
   await p5.goto(base + 'index.html');
   await p5.waitForSelector('#chips .chip[data-name="Ali Köse"]');
   const names5 = async () => (await p5.locator('#chips .chip').evaluateAll((a) => a.map((x) => x.dataset.name))).sort();
@@ -491,11 +510,12 @@ await ctx2.close();
   await p5.locator('#siteTabs [data-site="gundogdu"]').click();
   await p5.waitForFunction(() => document.querySelector('#siteTabs button.active').dataset.site === 'gundogdu');
   const until5 = async (fn, ms = 10000) => { const t = Date.now(); while (Date.now() - t < ms) { if (fn()) return true; await p5.waitForTimeout(100); } return false; };
-  check(await until5(() => rec5.some((b) => b.action === 'saveRoster')), 'göç sonrası saveRoster gönderildi');
-  const rosterCalls = rec5.filter((b) => b.action === 'getRoster' || b.action === 'saveRoster');
-  check(rosterCalls.length > 0 && rosterCalls.every((b) => b.site === 'gundogdu'), 'yalnız gundogdu ile getRoster/saveRoster: ' + rosterCalls.map((b) => b.action + ':' + b.site).join(','));
-  const sv = (srv5.rosters.gundogdu || []).flatMap((t) => t.members);
-  check(['Zeki', 'Mehmet', 'Ali Köse'].every((n) => sv.includes(n)), 'sunucuya tüm isimler gitti: ' + JSON.stringify(srv5.rosters.gundogdu));
+  check(await until5(() => rec5.some((b) => b.action === 'saveRoster2')), 'göç sonrası saveRoster2 gönderildi');
+  const rosterCalls = rec5.filter((b) => /^(get|save)Roster2?$/.test(b.action));
+  check(rosterCalls.length > 0 && rosterCalls.every((b) => b.site === 'gundogdu'), 'yalnız gundogdu ile getRoster2/saveRoster2: ' + rosterCalls.map((b) => b.action + ':' + b.site).join(','));
+  await until5(() => ['Zeki', 'Mehmet', 'Ali Köse'].every((n) => srv5.roster().flatMap((t) => t.members).includes(n)));
+  const sv = srv5.roster().flatMap((t) => t.members);
+  check(['Zeki', 'Mehmet', 'Ali Köse'].every((n) => sv.includes(n)), 'sunucuya tüm isimler gitti: ' + JSON.stringify(srv5.roster()));
   // (b) İthal sonda
   const kalip = p5.locator('#chips section.team', { has: p5.locator('h3', { hasText: /^Kalıp$/ }) });
   await p5.waitForFunction(() => document.getElementById('pendingCount').textContent === '0', null, { timeout: 15000 });
@@ -522,8 +542,8 @@ await ctx2.close();
   check((await p5.locator('#teamSettings select option', { hasText: 'Arşiv' }).count()) === 0, 'taşı listesinde Arşiv seçeneği yok');
   await p5.click('#closeSettings');
   check((await p5.locator('#chips .chip[data-name="Zeki"]').count()) === 0 && (await p5.locator('#chips h3', { hasText: 'Arşiv' }).count()) === 0, 'Zeki ana ekranda yok, Arşiv ekibi ana ekranda yok');
-  check(await until5(() => (srv5.rosters.gundogdu || []).some((t) => t.name === 'Arşiv (sigorta çıkışı)' && t.hidden === true && t.members.includes('Zeki'))), 'saveRoster: Arşiv ekibi hidden:true ve Zeki içinde: ' + JSON.stringify(srv5.rosters.gundogdu));
-  check(!(srv5.rosters.gundogdu.find((t) => t.name === 'Kalıp').members.includes('Zeki')), 'Zeki Kalıp ekibinden çıktı');
+  check(await until5(() => srv5.roster().some((t) => t.name === 'Arşiv (sigorta çıkışı)' && t.hidden === true && t.members.includes('Zeki'))), 'saveRoster2: Arşiv ekibi hidden:true ve Zeki içinde: ' + JSON.stringify(srv5.roster()));
+  check(!(srv5.roster().find((t) => t.name === 'Kalıp').members.includes('Zeki')), 'Zeki Kalıp ekibinden çıktı');
   // geçmiş gün: kaydı olan arşivli kişi görünür (gundogdu için kayıt ekle)
   await p5.click('#prevDay');
   await p5.waitForFunction(() => /^Bu gün/.test(document.getElementById('summary').textContent));
@@ -537,7 +557,7 @@ await ctx2.close();
   await p5.locator('#teamSettings button[data-restore="Zeki"]').click();
   await p5.click('#closeSettings');
   check((await p5.locator('#chips section.team', { has: p5.locator('h3', { hasText: /^Kalıp$/ }) }).locator('.chip[data-name="Zeki"]').count()) === 1, 'Geri al: Zeki Kalıp ekibine döndü');
-  check(await until5(() => (srv5.rosters.gundogdu.find((t) => t.name === 'Kalıp').members || []).includes('Zeki')), 'geri alma sunucuya gitti');
+  check(await until5(() => (srv5.roster().find((t) => t.name === 'Kalıp').members || []).includes('Zeki')), 'geri alma sunucuya gitti');
   // 2.5.1: yeniden adlandırma, süzgeç
   await p5.click('#btnSettings');
   await p5.locator('#teamSettings button[data-ren="Zeki"]').click();
@@ -550,8 +570,8 @@ await ctx2.close();
   check(true, 'isim değişti');
   const dk = await p5.evaluate((y) => new Promise((res) => { const r = indexedDB.open('santiye-defteri'); r.onsuccess = () => { const q = r.result.transaction('days').objectStore('days').get('koseilyas|' + y); q.onsuccess = () => res(q.result); }; }), yIso5);
   check(dk && dk.attendance['Zeki Usta'] === 1 && !('Zeki' in dk.attendance), 'puantaj kayıtlarında isim değişti: ' + JSON.stringify(dk && dk.attendance));
-  check(await until5(() => (srv5.days['koseilyas|' + yIso5].attendance['Zeki Usta'] === 1)), 'yeni isimle saveDay gitti');
-  check(await until5(() => (srv5.rosters.gundogdu.find((t) => t.name === 'Kalıp').members || []).includes('Zeki Usta')), 'yeni isim sunucu listesinde');
+  check(await until5(() => (srv5.day('koseilyas', yIso5).attendance['Zeki Usta'] === 1 && !('Zeki' in srv5.day('koseilyas', yIso5).attendance))), 'yeni isimle saveDay gitti (eski adın hücresi temizlendi)');
+  check(await until5(() => (srv5.roster().find((t) => t.name === 'Kalıp').members || []).includes('Zeki Usta') && !srv5.roster().some((t) => t.members.includes('Zeki'))), 'yeni isim sunucu listesinde, eski ad silindi');
   await p5.locator('#tfPills button', { hasText: /^Ekipsiz$/ }).click();
   check((await p5.locator('#teamSettings .tset').count()) === 1 && (await p5.locator('#teamSettings .mname', { hasText: 'Ali Köse' }).count()) === 1, 'ekip düğmesi süzdü');
   await p5.locator('#tfPills button', { hasText: 'Tümü' }).click();
@@ -567,8 +587,8 @@ await ctx2.close();
     else {
       await p5.route('https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js', (route) => route.fulfill({ status: 200, contentType: 'text/javascript', headers: { 'access-control-allow-origin': '*' }, body: fs.readFileSync(xlFile) }));
       const ym = tIso5.slice(0, 7), day = (n) => `${ym}-${String(n).padStart(2, '0')}`;
-      srv5.days['gundogdu|' + day(1)] = { attendance: { 'Mehmet': 1, 'Ahmet İthal': 0.5, 'Yabancı Kişi': 1 }, note: '' };
-      srv5.days['gundogdu|' + day(2)] = { attendance: { 'Mehmet': 1 }, note: '' };
+      srv5.seedDay('gundogdu', day(1), { 'Mehmet': 1, 'Ahmet İthal': 0.5, 'Yabancı Kişi': 1 });
+      srv5.seedDay('gundogdu', day(2), { 'Mehmet': 1 });
       // Kalıpçı ve Demirci ekipleri
       await p5.fill('#newTeam', 'Demirci'); await p5.click('#addTeam');
       await p5.fill('#newTeam', 'KALIPÇI'); await p5.click('#addTeam');
@@ -579,7 +599,7 @@ await ctx2.close();
       await kal2.locator('form.teamadd input').fill('Kalıp Bir'); await kal2.locator('form.teamadd button').click();
       await kal2.locator('form.teamadd input').fill('Kalıp İki'); await kal2.locator('form.teamadd button').click();
       await p5.waitForSelector('#chips .chip[data-name="Kalıp İki"]');
-      srv5.days['gundogdu|' + day(3)] = { attendance: { 'Kalıp İki': 1, 'Demir Ali': 1 }, note: '' };
+      srv5.seedDay('gundogdu', day(3), { 'Kalıp İki': 1, 'Demir Ali': 1 });
       await p5.click('#btnSettings');
       await p5.selectOption('#xlSite', 'gundogdu');
       await p5.evaluate(() => { const c = HTMLAnchorElement.prototype.click; HTMLAnchorElement.prototype.click = function () { window.__dlName = this.download; return c.call(this); }; });
@@ -787,8 +807,10 @@ await ctx3.close();
   const log9 = [], active9 = new Set(); let dup9 = 0, hold9 = false;
   await ctx9.route(GAS, async (route) => {
     const body = JSON.parse(route.request().postData() || '{}');
-    let reply = { ok: true };
-    if (body.action === 'getRoster') reply = { ok: true, teams: [{ name: 'Ekip', hidden: false, members: ['Ali', 'Veli'] }] };
+    let reply = { ok: true, v: 3 };
+    const roster9 = { ok: true, v: 3, teams: [{ id: 'e1', name: 'Ekip', hidden: false, updatedAt: 0 }], members: ['Ali', 'Veli'].map((n, i) => ({ id: 'm' + i, name: n, team: 'e1', updatedAt: 0 })) };
+    if (body.action === 'getRoster2' || body.action === 'saveRoster2') reply = roster9;
+    else if (body.action === 'getMeta') reply = { ok: true, v: 3, items: {} };
     else if (body.action === 'getDay') {
       const k = body.site + '|' + body.date;
       if (active9.has(k)) dup9++;
@@ -796,11 +818,12 @@ await ctx3.close();
       const snap = days9[k] || { attendance: {}, note: '' };
       await new Promise((r) => setTimeout(r, 800));
       active9.delete(k); log9.push(k);
-      reply = { ok: true, attendance: snap.attendance, note: snap.note };
+      reply = { ok: true, v: 3, attendance: snap.attendance, note: snap.note, noteUpdatedAt: 0 };
     } else if (body.action === 'saveDay') { if (hold9) await new Promise((r) => setTimeout(r, 6000)); }
     await route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(reply) });
   });
   await p9.addInitScript(([url]) => {
+    window.__syncIntervalMs = 600000; // bu testte canlı yenileme istek sayımını bozmasın
     if (!localStorage.getItem('sd_settings')) localStorage.setItem('sd_settings', JSON.stringify({ url, key: 'k' }));
     if (!localStorage.getItem('sd_site')) localStorage.setItem('sd_site', JSON.stringify('gundogdu'));
   }, [GAS]);
@@ -857,7 +880,8 @@ await ctx3.close();
   await p9.evaluate(() => window.dispatchEvent(new Event('online')));
   await until9(() => log9.slice(n1).includes('gundogdu|' + T), 4000);
   await p9.waitForTimeout(300);
-  check(await ali.evaluate((b) => b.classList.contains('full')) && await p9.locator('#chips .chip[data-name="Veli"]').evaluate((b) => b.classList.contains('half')), '2.9: kirli puantaj sunucu verisiyle ezilmedi');
+  check(await ali.evaluate((b) => b.classList.contains('full')), '2.9: gönderilmemiş yerel işaret (Ali) sunucu verisiyle ezilmedi');
+  check(await p9.locator('#chips .chip[data-name="Veli"]').evaluate((b) => b.classList.contains('full')), '3.0: dokunulmayan kişide (Veli) diğer telefonun değişikliği geldi');
   check(errs9.length === 0, '2.9: sayfa hatası yok ' + errs9.join('|'));
   await ctx9.close();
 }
@@ -940,6 +964,142 @@ await ctx3.close();
   check((await secH('Beton').count()) === 1, '2.9.4: Göster ile ekip geri geldi');
   check(errsH.length === 0, '2.9.4: sayfa hatası yok ' + errsH.join('|'));
   await ctxH.close();
+}
+
+// ---- 3.0: iki telefon aynı anda (aynı Apps Script) ----
+{
+  const srvT = newSrv();
+  srvT.seedRoster([{ name: 'Kalıpçı', hidden: false, members: ['Raskon', 'Sefa', 'Mehmet'] }, { name: 'Demirci', hidden: false, members: ['Can'] }]);
+  const phone = async (label) => {
+    const c = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+    const p = await c.newPage();
+    const ph = { c, p, errs: [], label, offline: false };
+    p.on('pageerror', (e) => ph.errs.push('pageerror: ' + e.message));
+    await p.route(GAS, async (route) => {
+      if (ph.offline) return route.abort('failed');
+      const body = JSON.parse(route.request().postData() || '{}');
+      await route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(srvT.reply(body)) });
+    });
+    await p.addInitScript(([url]) => {
+      window.__syncIntervalMs = 1500; // canlı yenileme aralığı (test için kısa)
+      if (!localStorage.getItem('sd_settings')) { localStorage.setItem('sd_settings', JSON.stringify({ url, key: 'K' })); localStorage.setItem('sd_site', JSON.stringify('gundogdu')); }
+    }, [GAS]);
+    await p.goto(base + 'index.html');
+    await p.waitForSelector('#chips .chip[data-name="Raskon"]', { timeout: 10000 });
+    return ph;
+  };
+  const A = await phone('A'), B = await phone('B');
+  const until = async (fn, ms = 10000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await fn()) return true; await new Promise((r) => setTimeout(r, 100)); } return false; };
+  const syncNow = (ph) => ph.p.evaluate(() => document.getElementById('syncNow').click());
+  const settled = (ph) => ph.p.waitForFunction(() => document.getElementById('pendingCount').textContent === '0', null, { timeout: 15000 });
+  const T = await A.p.inputValue('#dateInput');
+  const Ttr = T.split('-').reverse().join('.');
+  const chip = (ph, n) => ph.p.locator(`#chips .chip[data-name="${n}"]`);
+  const isFull = (ph, n) => chip(ph, n).evaluate((b) => b.classList.contains('full')).catch(() => false);
+
+  // (1) Aynı gün, aynı şantiye: A Raskon'u, B Sefa'yı işaretler -> sunucuda ikisi de var
+  await chip(A, 'Raskon').click(); await chip(B, 'Sefa').click();
+  await Promise.all([syncNow(A), syncNow(B)]);
+  await Promise.all([settled(A), settled(B)]);
+  const att = srvT.day('gundogdu', T).attendance;
+  check(att.Raskon === 1 && att.Sefa === 1, '3.0 iki telefon: sunucuda ikisinin işareti de var: ' + JSON.stringify(att));
+  // canlı yenileme: diğer telefonun işareti bir yenileme turunda gelir (gün yeniden açılmadan)
+  check(await until(() => isFull(B, 'Raskon'), 5000), '3.0 canlı yenileme: B, A\'nın işaretini (Raskon) gördü');
+  check(await until(() => isFull(A, 'Sefa'), 5000), '3.0 canlı yenileme: A, B\'nin işaretini (Sefa) gördü');
+  check(/^son eşitleme: (az önce|\d+ sn önce)$/.test(await B.p.textContent('#lastSync')) && await B.p.locator('#lastSync').isVisible(), 'son eşitleme ipucu: ' + await B.p.textContent('#lastSync'));
+  // A Raskon'u kaldırır, B Sefa'yı yarım yapar (aynı anda): ikisi de doğru kalır
+  // (B'nin hareketleri önce: A'nın değişikliği canlı gelip çipleri kaydırırsa uzun basış iptal olur)
+  await chip(B, 'Sefa').click(); // Sefa boşalır
+  await B.p.waitForTimeout(100);
+  const bb = await chip(B, 'Sefa').boundingBox();
+  await B.p.mouse.move(bb.x + bb.width / 2, bb.y + bb.height / 2); await B.p.mouse.down(); await B.p.waitForTimeout(600); await B.p.mouse.up();
+  check(await chip(B, 'Sefa').evaluate((b) => b.classList.contains('half')), '3.0: B\'de Sefa yarım');
+  await chip(A, 'Raskon').click();
+  await Promise.all([syncNow(A), syncNow(B)]); await Promise.all([settled(A), settled(B)]);
+  const att2 = srvT.day('gundogdu', T).attendance;
+  check(!('Raskon' in att2) && att2.Sefa === 0.5, '3.0: silme ve yarım gün birbirini ezmedi: ' + JSON.stringify(att2));
+
+  // (2) A bir ismi siler -> B yenileyince gider ve B onu geri getirmez
+  await A.p.click('#btnSettings');
+  const tsA = (name) => A.p.locator('#teamSettings .tset', { has: A.p.locator(`input[value="${name}"]`) });
+  await tsA('Kalıpçı').locator('button[data-del="Mehmet"]').click();
+  await tsA('Kalıpçı').locator('button[data-delyes="Mehmet"]').click();
+  await A.p.click('#closeSettings');
+  check(await until(() => !srvT.roster().some((t) => t.members.includes('Mehmet'))), '3.0: silme Drive\'a gitti');
+  check(await until(async () => (await chip(B, 'Mehmet').count()) === 0, 6000), '3.0: B yenileyince silinen isim gitti');
+  // B ekip listesinde başka değişiklik yapar (tam liste gönderseydi Mehmet geri gelirdi)
+  const kalB = B.p.locator('#chips section.team', { has: B.p.locator('h3', { hasText: /^Kalıpçı$/ }) });
+  await kalB.locator('form.teamadd input').fill('Yeni B'); await kalB.locator('form.teamadd button').click();
+  await syncNow(B); await settled(B);
+  check(await until(() => srvT.roster().some((t) => t.members.includes('Yeni B'))), '3.0: B\'nin eklediği isim gitti');
+  await B.p.waitForTimeout(500);
+  check(!srvT.roster().some((t) => t.members.includes('Mehmet')) && (await chip(B, 'Mehmet').count()) === 0, '3.0: B silinen ismi geri getirmedi');
+  check(await until(async () => (await chip(A, 'Yeni B').count()) === 1, 6000), '3.0: A, B\'nin eklediği ismi gördü');
+
+  // (3) B bir ekibin adını değiştirir -> A görür
+  await B.p.click('#btnSettings');
+  await B.p.locator('#teamSettings input[data-tname]').nth(1).fill('Demir Ekibi');
+  const tnId = await B.p.locator('#teamSettings input[data-tname]').nth(1).getAttribute('data-tname');
+  await B.p.locator(`#teamSettings button[data-trename="${tnId}"]`).click();
+  await B.p.click('#closeSettings');
+  const teamH = (ph, n) => ph.p.locator('#chips section.team[data-team] h3', { hasText: new RegExp('^' + n + '$') });
+  check(await until(async () => (await teamH(A, 'Demir Ekibi').count()) === 1 && (await teamH(A, 'Demirci').count()) === 0, 8000), '3.0: B\'nin ekip adı değişikliği A\'da göründü');
+  check(await until(async () => (await A.p.locator('#chips section.team', { has: A.p.locator('h3', { hasText: /^Demir Ekibi$/ }) }).locator('.chip[data-name="Can"]').count()) === 1), '3.0: üyeler yeni adlı ekipte');
+
+  // (4) A'da şantiye bazında gizleme -> B'de de görünür (Drive: AYARLAR)
+  await A.p.click('#btnSettings');
+  const tsDem = A.p.locator('#teamSettings .tset', { has: A.p.locator('input[value="Demir Ekibi"]') });
+  await tsDem.locator('button[data-sshide]').click(); await tsDem.locator('button[data-sshideyes]').click();
+  await A.p.click('#closeSettings');
+  check(await until(() => { const m = srvT.meta().sd_site_hide; return !!(m && (m.value.gundogdu || []).includes('Demir Ekibi')); }), '3.0: şantiye gizleme Drive\'a (AYARLAR) gitti');
+  check(await until(async () => (await teamH(B, 'Demir Ekibi').count()) === 0, 8000), '3.0: A\'daki şantiye gizleme B\'de uygulandı');
+  check(await B.p.evaluate(() => (JSON.parse(localStorage.getItem('sd_site_hide') || '{}').gundogdu || []).includes('Demir Ekibi')), '3.0: B\'nin telefondaki kopyası güncellendi');
+
+  // (5) İki telefon aynı gün birer irsaliye fotoğrafı -> _1 ve _2
+  const jpg = await A.p.evaluate(() => { const c = document.createElement('canvas'); c.width = 300; c.height = 200; const g = c.getContext('2d'); g.fillStyle = '#4a4'; g.fillRect(0, 0, 300, 200); return c.toDataURL('image/jpeg', 0.9).split(',')[1]; });
+  for (const ph of [A, B]) {
+    ph.offline = true; // ikisi de çevrimdışıyken çeker: telefondaki geçici ad ikisinde de _1
+    await ph.p.evaluate(() => { navigator.mediaDevices.getUserMedia = () => Promise.reject(Object.assign(new Error('x'), { name: 'NotAllowedError' })); });
+    const [fc] = await Promise.all([ph.p.waitForEvent('filechooser'), ph.p.click('#matBtn')]);
+    await fc.setFiles({ name: 'i.jpg', mimeType: 'image/jpeg', buffer: Buffer.from(jpg, 'base64') });
+    await ph.p.waitForSelector('#photoGrid .photo .irs');
+  }
+  const localNames = async (ph) => ph.p.evaluate(() => new Promise((res) => { const r = indexedDB.open('santiye-defteri'); r.onsuccess = () => { const q = r.result.transaction('photos').objectStore('photos').getAll(); q.onsuccess = () => res(q.result.filter((p) => p.kind === 'irsaliye').map((p) => p.name)); }; }));
+  check((await localNames(A))[0] === (await localNames(B))[0], '3.0: iki telefonda geçici irsaliye adı aynı: ' + (await localNames(A))[0]);
+  A.offline = false; B.offline = false;
+  await Promise.all([syncNow(A), syncNow(B)]); await Promise.all([settled(A), settled(B)]);
+  const drv = srvT.photoNames('gundogdu', Ttr).sort();
+  check(JSON.stringify(drv) === JSON.stringify([`İrsaliye_${Ttr}_1.jpg`, `İrsaliye_${Ttr}_2.jpg`]), "3.0: Drive'da irsaliye _1 ve _2: " + drv.join(', '));
+  const both = [...(await localNames(A)), ...(await localNames(B))].sort();
+  check(JSON.stringify(both) === JSON.stringify(drv), '3.0: telefonlardaki kayıt Drive adıyla güncellendi: ' + both.join(', '));
+  const labels = [await A.p.textContent('#photoGrid .irs'), await B.p.textContent('#photoGrid .irs')].sort();
+  check(JSON.stringify(labels) === JSON.stringify(['İrsaliye 1', 'İrsaliye 2']), '3.0: küçük resim etiketinde numara: ' + labels.join(', '));
+
+  // (6) Not iki telefonda düzenlenir -> en yeni kazanır
+  A.offline = true;
+  await A.p.fill('#note', 'A notu (eski)');
+  await A.p.waitForFunction(() => document.getElementById('noteState').textContent === 'Kaydedildi');
+  await A.p.evaluate(() => document.getElementById('note').blur());
+  await A.p.waitForTimeout(50);
+  await B.p.fill('#note', 'B notu (yeni)');
+  await B.p.waitForFunction(() => document.getElementById('noteState').textContent === 'Kaydedildi');
+  await B.p.evaluate(() => document.getElementById('note').blur());
+  await syncNow(B); await settled(B);
+  A.offline = false; // A'nın eski notu şimdi gider; sunucu yok sayar
+  await A.p.evaluate(() => document.getElementById('syncNow').click()); await settled(A);
+  check(srvT.day('gundogdu', T).note === 'B notu (yeni)', '3.0 not: en yeni (B) kazandı: ' + srvT.day('gundogdu', T).note);
+  check(await until(async () => (await A.p.inputValue('#note')) === 'B notu (yeni)', 6000), '3.0 not: A\'nın ekranı en yeni notu gösteriyor');
+  await B.p.waitForTimeout(2000);
+  check((await B.p.inputValue('#note')) === 'B notu (yeni)', '3.0 not: B kendi notunu koruyor');
+
+  // (7) Canlı yenileme: A'nın değişikliği B'de (gün yeniden açılmadan) bir turda görünür
+  check(!(await isFull(B, 'Raskon')), '3.0: B\'de Raskon boş');
+  await chip(A, 'Raskon').click(); await syncNow(A); await settled(A);
+  const t0 = Date.now();
+  const seen = await until(() => isFull(B, 'Raskon'), 6000);
+  check(seen, '3.0 canlı yenileme: A\'nın işareti B\'ye ' + (Date.now() - t0) + ' ms içinde geldi');
+  check(A.errs.length === 0 && B.errs.length === 0, '3.0 iki telefon: sayfa hatası yok ' + [...A.errs, ...B.errs].join('|'));
+  await A.c.close(); await B.c.close();
 }
 
 // Ayar yoksa Türkçe uyarı

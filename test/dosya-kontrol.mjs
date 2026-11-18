@@ -1,6 +1,6 @@
 // Yayın öncesi: kritik dosyalar boş ya da bozuk olmasın
 import { readFileSync } from 'node:fs';
-const need = { 'sw.js': ['CACHE', "addEventListener('fetch'"], 'app.js': ['openCamera'], 'index.html': ['app.js'], 'surum.js': ['SURUMLER'], 'app.css': ['.chip'] };
+const need = { 'sw.js': ['CACHE', "addEventListener('fetch'"], 'app.js': ['openCamera'], 'index.html': ['app.js'], 'surum.js': ['SURUMLER'], 'app.css': ['.chip'], 'apps-script/Code.gs': ['saveRoster2', 'function uploadPhoto_'] };
 let bad = 0;
 for (const [f, keys] of Object.entries(need)) {
   const s = readFileSync(new URL('../' + f, import.meta.url), 'utf8');

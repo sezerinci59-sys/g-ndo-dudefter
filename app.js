@@ -12,12 +12,23 @@ const $ = (id) => document.getElementById(id);
 // ---------- localStorage (hata verebilir: her erişim korumalı) ----------
 const ls = {
   get(k, d = null) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
-  set(k, v) {
+  // fromServer: Drive'dan gelen değer yazılıyor (yeniden gönderilmez)
+  set(k, v, fromServer = false) {
     try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* yoksay */ }
     if (META_KEYS.includes(k)) mirrorMeta(k, v);
+    if (!fromServer && SHARED_META.includes(k)) touchMeta(k);
   }
 };
-const META_KEYS = ['sd_settings', 'sd_coords', 'sd_site', 'sd_site_hide'];
+const META_KEYS = ['sd_settings', 'sd_coords', 'sd_site', 'sd_site_hide', 'sd_arsiv', 'sd_meta_at'];
+// İki telefonun ortak ayarları (Drive'da AYARLAR sayfası; telefondaki kopya önbellek)
+const SHARED_META = ['sd_site_hide', 'sd_arsiv', 'sd_coords'];
+const metaAt = () => { const o = ls.get('sd_meta_at', {}); return o && typeof o === 'object' ? o : {}; };
+function setMetaAt(k, at) { const o = metaAt(); o[k] = at; ls.set('sd_meta_at', o); }
+function touchMeta(k) { setMetaAt(k, Math.max(Date.now(), (metaAt()[k] || 0) + 1)); enqueueMeta(k); }
+async function enqueueMeta(k) {
+  try { await dbPut('queue', { id: 'meta|' + k, type: 'saveMeta', metaKey: k, rev: Date.now() + '.' + Math.random() }); } catch { /* yoksay */ }
+  refreshBanner(); scheduleSync();
+}
 function mirrorMeta(k, v) { dbPut('meta', { k, v }).catch(() => {}); }
 async function syncMeta() {
   for (const k of META_KEYS) {
@@ -88,7 +99,7 @@ function shortDate(s) {
 const fmtNum = (n) => String(n).replace('.', ',');
 
 // ---------- Durum ----------
-const state = { loading: false, otherAtt: {}, site: null, date: today(), day: null, teams: [], members: [], pulled: false, rosterLoaded: false };
+const state = { loading: false, otherAtt: {}, site: null, date: today(), day: null, teams: [], members: [], gone: [], pulled: false, pulled2: false, rosterLoaded: false };
 const ui = { hideTeam: null, delName: null, archName: null, editName: null, filterTeam: null, q: '', closed: new Set() };
 let photoUrls = [];
 
@@ -166,8 +177,8 @@ function setSiteHidden(t, site, on) {
 const mainTeams = () => shownTeams().filter((t) => !isSiteHidden(t));
 async function readShared() {
   const rec = await dbGet('names', ROSTER_KEY);
-  if (rec && Array.isArray(rec.teams)) return { teams: rec.teams, members: rec.members || [], pulled: !!rec.pulled };
-  const r = { teams: [], members: [], pulled: false };
+  if (rec && Array.isArray(rec.teams)) return { teams: rec.teams, members: rec.members || [], gone: rec.gone || [], pulled: !!rec.pulled, pulled2: !!rec.pulled2 };
+  const r = { teams: [], members: [], gone: [], pulled: false, pulled2: false };
   let found = false;
   for (const site of Object.keys(SITES)) {
     const o = await dbGet('names', site); if (!o) continue;
@@ -202,29 +213,53 @@ async function readShared() {
 }
 async function loadNames() {
   const r = await readShared();
-  state.teams = r.teams; state.members = r.members; state.pulled = r.pulled; state.rosterLoaded = true;
+  state.teams = r.teams; state.members = r.members; state.gone = r.gone || []; state.pulled = r.pulled; state.pulled2 = !!r.pulled2; state.rosterLoaded = true;
 }
-function ensureEkipsiz() {
-  let t = state.teams.find((x) => x.name === EKIPSIZ);
-  if (!t) { t = { id: newId(), name: EKIPSIZ, hidden: false }; state.teams.push(t); }
+// Ekip/kişi değişikliği: zaman damgası (ms) + gönderilecek işareti. Damga hep öncekinden büyük olur.
+const stamp = (e) => { e.updatedAt = Math.max(Date.now(), (e.updatedAt || 0) + 1); e.dirty = true; return e; };
+function ensureEkipsiz(r = state) {
+  let t = r.teams.find((x) => x.name === EKIPSIZ);
+  if (!t) { t = stamp({ id: newId(), name: EKIPSIZ, hidden: false }); r.teams.push(t); }
   return t;
 }
+function addTeam(name, hidden = false) { const t = stamp({ id: newId(), name, hidden }); state.teams.push(t); return t; }
+function addMember(name, teamId) {
+  const k = lcTr(name), g = state.gone.find((x) => lcTr(x.name) === k);
+  state.gone = state.gone.filter((x) => x !== g);
+  const m = stamp({ name, teamId, id: newId(), updatedAt: g ? g.updatedAt : 0 });
+  state.members.push(m); return m;
+}
+// Silinen kişi "silindi" kaydı olarak kalır; başka telefon onu geri getiremez.
+function buryMember(name, id, teamId, prevAt) {
+  const k = lcTr(name);
+  state.gone = state.gone.filter((x) => lcTr(x.name) !== k);
+  state.gone.push(stamp({ name, id: id || '', teamId, updatedAt: prevAt || 0 }));
+}
+function deleteMember(m) { state.members = state.members.filter((x) => x !== m); buryMember(m.name, m.id, m.teamId, m.updatedAt); }
 const hasName = (v) => state.members.some((m) => m.name.toLocaleLowerCase('tr') === v.toLocaleLowerCase('tr'));
 // Eski kayıtlarda bayrak yok: senkronize değilse ikisi de değişmiş sayılır.
 const isAttDirty = (d) => d.attDirty != null ? !!d.attDirty : !d.synced;
 const isNoteDirty = (d) => d.noteDirty != null ? !!d.noteDirty : !d.synced;
+// what.att: değişen isimler (kişi bazında gönderilir: {ad: 1 | 0.5 | null}); what.note: not değişti
 async function persistDay(day, what = {}) {
+  if (what.att) {
+    if (isAttDirty(day) && !day.pend) day.pendAll = true; // eski sürümden kalan gönderilmemiş gün: sunucuyla karşılaştırılıp gönderilir
+    day.pend = day.pend || {};
+    const names = Array.isArray(what.att) ? what.att : Object.keys(day.attendance || {});
+    for (const n of names) day.pend[n] = day.attendance[n] > 0 ? day.attendance[n] : null;
+  }
+  if (what.note) day.noteAt = Math.max(Date.now(), (day.noteAt || 0) + 1);
   const a = isAttDirty(day) || !!what.att, n = isNoteDirty(day) || !!what.note;
   day.attDirty = a; day.noteDirty = n;
   day.updatedAt = Date.now();
   day.synced = false;
   await dbPut('days', day);
-  await dbPut('queue', { id: `day|${day.site}|${day.date}`, type: 'saveDay', v: 2, site: day.site, date: day.date });
+  await dbPut('queue', { id: `day|${day.site}|${day.date}`, type: 'saveDay', v: 3, site: day.site, date: day.date });
   refreshBanner();
   scheduleSync();
 }
 async function saveRosterData(r) {
-  await dbPut('names', { site: ROSTER_KEY, teams: r.teams, members: r.members, list: r.members.map((m) => m.name), pulled: !!r.pulled });
+  await dbPut('names', { site: ROSTER_KEY, teams: r.teams, members: r.members, gone: r.gone || [], list: r.members.map((m) => m.name), pulled: !!r.pulled, pulled2: !!r.pulled2 });
 }
 const saveNames = () => saveRosterData(state);
 // Yerel ekip/isim değişikliği: kaydet ve sunucuya gönderilmek üzere sıraya al (tek ortak kayıt; sunucuda Gündoğdu sayfası ana liste).
@@ -451,7 +486,11 @@ async function renderPhotos() {
     d.className = 'pdel' + (armed ? ' armed' : ''); d.textContent = armed ? 'Sil?' : '✕';
     d.setAttribute('aria-label', armed ? 'Silmek için tekrar dokunun' : 'Fotoğrafı sil');
     div.append(img, s);
-    if (p.kind === 'irsaliye') { const t = document.createElement('span'); t.className = 'irs'; t.textContent = 'İrsaliye'; div.appendChild(t); }
+    if (p.kind === 'irsaliye') {
+      // Numara Drive'da verilir: gönderilince gerçek numara görünür
+      const no = p.status === 'sent' && /_(\d+)\.jpg$/.exec(p.name || '');
+      const t = document.createElement('span'); t.className = 'irs'; t.textContent = no ? 'İrsaliye ' + no[1] : 'İrsaliye'; div.appendChild(t);
+    }
     div.append(d); grid.appendChild(div);
   }
 }
@@ -503,7 +542,8 @@ async function selectSite(site) {
   $('picker').hidden = true;
   if (!booted) { booted = true; playClass(document.querySelector('main'), 'boot', 360 + 70 * 5); }
   else playClass(document.querySelector('main'), 'pg-up', 320);
-  pullDay(); pullRoster();
+  pullDay(); pullRoster().then(pullMeta);
+  renderAgo();
 }
 // Gün geçişi: animasyon sürerken gelen istekler üst üste binmez; yalnızca en son hedef tarih sıraya alınır.
 let navBusy = false, navTarget = null;
@@ -584,7 +624,7 @@ $('chips').addEventListener('pointerdown', (e) => {
     if (got === att[n]) return toast('Diğer şantiyede yarım gün var; yarım gün işaretlendi.');
     att[n] = got;
     if (got < want) toast('Diğer şantiyede yarım gün var; yarım gün işaretlendi.');
-    if (!patchChips([n])) renderChips(); await persistDay(state.day, { att: true });
+    if (!patchChips([n])) renderChips(); await persistDay(state.day, { att: [n] });
   }, 450);
 });
 $('chips').addEventListener('pointermove', (e) => {
@@ -603,7 +643,7 @@ $('chips').addEventListener('click', async (e) => {
       att[n] = limitedTarget(n, 1);
       if (att[n] < 1) toast('Diğer şantiyede yarım gün var; yarım gün işaretlendi.');
     } else delete att[n];
-    if (!patchChips([n])) renderChips(); await persistDay(state.day, { att: true });
+    if (!patchChips([n])) renderChips(); await persistDay(state.day, { att: [n] });
   } else if (t.dataset.tgl) {
     toggleTeam(t.closest('section.team'));
   } else if (t.dataset.all) {
@@ -613,7 +653,7 @@ $('chips').addEventListener('click', async (e) => {
     if (!todo.length) return;
     const changed = todo.map(([n]) => n);
     for (const [n, tg] of todo) att[n] = tg;
-    if (!patchChips(changed, true)) renderChips(); await persistDay(state.day, { att: true });
+    if (!patchChips(changed, true)) renderChips(); await persistDay(state.day, { att: changed });
   }
 });
 $('chips').addEventListener('submit', async (e) => {
@@ -623,7 +663,7 @@ $('chips').addEventListener('submit', async (e) => {
   const v = inp.value.trim().replace(/\s+/g, ' ');
   if (!v) return;
   if (hasName(v)) return toast('Bu isim zaten var.');
-  state.members.push({ name: v, teamId: f.dataset.team });
+  addMember(v, f.dataset.team);
   renderChips();
   const again = document.querySelector(`#chips form.teamadd[data-team="${f.dataset.team}"] input`);
   if (again) again.focus();
@@ -634,7 +674,7 @@ $('teamForm').addEventListener('submit', async (e) => {
   const v = $('newTeam').value.trim().replace(/\s+/g, ' ');
   if (!v) return;
   if (state.teams.some((t) => t.name.toLocaleLowerCase('tr') === v.toLocaleLowerCase('tr'))) return toast('Bu ekip zaten var.');
-  state.teams.push({ id: newId(), name: v, hidden: false });
+  addTeam(v);
   $('newTeam').value = '';
   renderChips(); await persistRoster();
 });
@@ -659,16 +699,22 @@ async function renameMember(old, raw) {
   if (neu === old) { ui.editName = null; return renderTeamSettings(); }
   const m = state.members.find((q) => q.name === old); if (!m) return;
   if (state.members.some((q) => q !== m && lcTr(q.name) === lcTr(neu))) return toast('Bu isim zaten var.');
-  m.name = neu; ui.editName = null;
+  // Eski ad "silindi" olarak kalır, yeni ad aynı kimlikle yeni kayıt olur (başka telefon eski adı geri getirmez)
+  if (lcTr(old) !== lcTr(neu)) { // yalnız büyük/küçük harf değiştiyse aynı kayıt
+    buryMember(old, m.id, m.teamId, m.updatedAt);
+    const g = state.gone.find((x) => lcTr(x.name) === lcTr(neu));
+    if (g) { state.gone = state.gone.filter((x) => x !== g); m.updatedAt = Math.max(m.updatedAt || 0, g.updatedAt || 0); }
+  }
+  m.name = neu; stamp(m); ui.editName = null;
   const moveKey = (att) => {
     if (!att || !(old in att)) return false;
     att[neu] = neu in att ? Math.max(att[neu], att[old]) : att[old]; delete att[old]; return true;
   };
   for (const rec of await dbAll('days')) {
     if (state.day && rec.key === state.day.key) continue;
-    if (moveKey(rec.attendance)) await persistDay(rec, { att: true });
+    if (moveKey(rec.attendance)) await persistDay(rec, { att: [old, neu] });
   }
-  if (state.day && moveKey(state.day.attendance)) await persistDay(state.day, { att: true });
+  if (state.day && moveKey(state.day.attendance)) await persistDay(state.day, { att: [old, neu] });
   const info = ls.get('sd_arsiv', {}) || {};
   if (info[old]) { info[neu] = info[old]; delete info[old]; ls.set('sd_arsiv', info); }
   await persistRoster();
@@ -751,15 +797,15 @@ $('teamSettings').addEventListener('click', async (e) => {
   else if (d.sshow) { const x = state.teams.find((q) => q.id === d.sshow); if (x) setSiteHidden(x, state.site, false); renderTeamSettings(); renderChips(); return; }
   else if (d.hide) { ui.hideTeam = d.hide; }
   else if (d.hideno) { ui.hideTeam = null; }
-  else if (d.hideyes) { const x = state.teams.find((q) => q.id === d.hideyes); if (x) x.hidden = true; ui.hideTeam = null; changed = true; }
-  else if (d.unhide) { const x = state.teams.find((q) => q.id === d.unhide); if (x) { x.hidden = false; toast(`${x.name} geri getirildi; ana ekranda görünür.`); } changed = true; }
+  else if (d.hideyes) { const x = state.teams.find((q) => q.id === d.hideyes); if (x) { x.hidden = true; stamp(x); } ui.hideTeam = null; changed = true; }
+  else if (d.unhide) { const x = state.teams.find((q) => q.id === d.unhide); if (x) { x.hidden = false; stamp(x); toast(`${x.name} geri getirildi; ana ekranda görünür.`); } changed = true; }
   else if (d.trename) {
     const v = $('teamSettings').querySelector(`input[data-tname="${d.trename}"]`).value.trim().replace(/\s+/g, ' ');
     const x = state.teams.find((q) => q.id === d.trename);
     if (!v || !x || v === x.name) return;
     if (state.teams.some((q) => q !== x && q.name.toLocaleLowerCase('tr') === v.toLocaleLowerCase('tr'))) return toast('Bu ekip zaten var.');
     const wasHid = Object.keys(SITES).filter((k) => isSiteHidden(x, k));
-    x.name = v; changed = true; toast('Ekip adı değişti.');
+    x.name = v; stamp(x); changed = true; toast('Ekip adı değişti.');
     for (const k of wasHid) setSiteHidden({ name: v }, k, true);
   }
   else if (d.arch) { ui.archName = d.arch; ui.delName = null; }
@@ -773,12 +819,12 @@ $('teamSettings').addEventListener('click', async (e) => {
     if (m) {
       const from = state.teams.find((q) => q.id === m.teamId);
       let at = state.teams.find(isArsiv);
-      if (!at) { at = { id: newId(), name: ARSIV, hidden: true }; state.teams.push(at); } else at.hidden = true;
+      if (!at) at = addTeam(ARSIV, true); else if (!at.hidden) { at.hidden = true; stamp(at); }
       if (from && !isArsiv(from)) {
         const info = ls.get('sd_arsiv', {}) || {};
         info[m.name] = { date: state.date, team: from.name }; ls.set('sd_arsiv', info);
       }
-      m.teamId = at.id; changed = true; toast('Sigorta çıkışı yapıldı; Arşiv bölümüne taşındı.');
+      m.teamId = at.id; stamp(m); changed = true; toast('Sigorta çıkışı yapıldı; Arşiv bölümüne taşındı.');
     }
     ui.archName = null;
   }
@@ -789,13 +835,13 @@ $('teamSettings').addEventListener('click', async (e) => {
       const want = info[m.name] && info[m.name].team;
       let t = want && state.teams.find((q) => !isArsiv(q) && lcTr(q.name) === lcTr(want));
       if (!t) t = shownTeams()[0];
-      if (!t) { t = { id: newId(), name: 'Kalıpçı', hidden: false }; state.teams.push(t); }
-      m.teamId = t.id; delete info[m.name]; ls.set('sd_arsiv', info); changed = true; toast('Geri alındı.');
+      if (!t) t = addTeam('Kalıpçı');
+      m.teamId = t.id; stamp(m); delete info[m.name]; ls.set('sd_arsiv', info); changed = true; toast('Geri alındı.');
     }
   }
   else if (d.del) { ui.delName = d.del; ui.archName = null; }
   else if (d.delno) { ui.delName = null; }
-  else if (d.delyes) { state.members = state.members.filter((m) => m.name !== d.delyes); ui.delName = null; changed = true; }
+  else if (d.delyes) { const m = state.members.find((q) => q.name === d.delyes); if (m) deleteMember(m); ui.delName = null; changed = true; }
   else return;
   renderTeamSettings();
   if (changed) { await persistRoster(); renderChips(); }
@@ -817,7 +863,7 @@ $('teamSettings').addEventListener('toggle', (e) => {
 $('teamSettings').addEventListener('change', async (e) => {
   const s = e.target.closest('select[data-move]'); if (!s) return;
   const m = state.members.find((q) => q.name === s.dataset.move);
-  if (m) { m.teamId = s.value; await persistRoster(); renderTeamSettings(); renderChips(); }
+  if (m) { m.teamId = s.value; stamp(m); await persistRoster(); renderTeamSettings(); renderChips(); }
 });
 // ---------- Excel indir ----------
 const EXCELJS_URL = 'https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js';
@@ -989,18 +1035,18 @@ $('copyYesterday').addEventListener('click', async () => {
   }
   if (!prev) return toast('Son 7 günde kayıt yok.');
   const att = state.day.attendance;
-  let added = false, count = 0;
+  let added = false, count = 0; const changed = [];
   for (const [n, v] of Object.entries(prev.attendance)) {
     if (!(v > 0) || att[n] > 0) continue; // bugün işaretli olanlar değişmez
     const pm = state.members.find((m) => m.name === n), pt = pm && state.teams.find((q) => q.id === pm.teamId);
     if (pt && isSiteHidden(pt)) continue; // bu şantiyede gizli ekip
     const t = limitedTarget(n, v); if (t <= 0) continue;
-    att[n] = t; count++;
-    if (!hasName(n)) { state.members.push({ name: n, teamId: ensureEkipsiz().id }); added = true; }
+    att[n] = t; count++; changed.push(n);
+    if (!hasName(n)) { addMember(n, ensureEkipsiz().id); added = true; }
   }
   if (added) await persistRoster();
   renderChips();
-  if (count) await persistDay(state.day, { att: true });
+  if (count) await persistDay(state.day, { att: changed });
   toast(`${count} kişi işaretlendi.`);
 });
 
@@ -1112,7 +1158,8 @@ async function toJpeg(src, maxSide, quality) {
   ctx.drawImage(src, 0, 0, c.width, c.height);
   return new Promise((res, rej) => c.toBlob((b) => (b ? res(b) : rej(new Error('toBlob'))), 'image/jpeg', quality));
 }
-// Gün başına kalıcı İrsaliye sayacı: silinen fotoğrafın numarası asla yeniden kullanılmaz.
+// Gün başına kalıcı İrsaliye sayacı (geçici ad): silinen fotoğrafın numarası asla yeniden kullanılmaz.
+// Gerçek numarayı Apps Script (3.0+) gönderim sırasında Drive klasörüne bakarak verir; iki telefon aynı numarayı alamaz.
 function nextIrsNo(site, date) {
   return openDB().then((db) => new Promise((resolve, reject) => {
     const t = db.transaction(['meta', 'photos'], 'readwrite');
@@ -1140,7 +1187,7 @@ async function savePhoto(site, date, src, kind) {
     name = `${trDate(date)}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}_${n}.jpg`;
   }
   const thumbData = 'data:image/jpeg;base64,' + await blobToBase64(thumb);
-  await dbPut('photos', { site, date, name, status: 'pending', blob, thumb, thumbData, createdAt: Date.now(), ...(kind ? { kind } : {}) });
+  await dbPut('photos', { site, date, name, status: 'pending', blob, thumb, thumbData, createdAt: Date.now(), uid: newId(), ...(kind ? { kind } : {}) });
   return thumb;
 }
 async function addPhotos(files, kind) {
@@ -1341,8 +1388,10 @@ function logEv(msg) {
 function logSummary(p) {
   const x = [p.action]; if (p.site) x.push(p.site); if (p.date) x.push(p.date);
   if (p.attendance) x.push('puantaj:' + Object.keys(p.attendance).length + ' kişi');
+  if (p.changes) x.push(Array.isArray(p.changes) ? 'ekip/kişi değişikliği:' + p.changes.length : 'değişen:' + Object.keys(p.changes).length + ' kişi');
   if (p.note !== undefined) x.push('not');
   if (p.teams) x.push('ekip:' + p.teams.length + ' / kişi:' + p.teams.reduce((n, t) => n + (t.members || []).length, 0));
+  if (p.metaKey) x.push(p.metaKey);
   if (p.name) x.push(p.name);
   return x.join(' ');
 }
@@ -1351,8 +1400,11 @@ async function post(payload) {
   try {
     const r = await postRaw(payload);
     let extra = '';
-    if (r && Array.isArray(r.teams)) extra = ' → ekip:' + r.teams.length + ' kişi:' + r.teams.reduce((n, t) => n + (t.members || []).length, 0);
+    if (r && Array.isArray(r.members)) extra = ' → ekip:' + (r.teams || []).filter((t) => !t.deleted).length + ' kişi:' + r.members.filter((m) => !m.deleted).length;
+    else if (r && Array.isArray(r.teams)) extra = ' → ekip:' + r.teams.length + ' kişi:' + r.teams.reduce((n, t) => n + (t.members || []).length, 0);
     if (r && r.attendance) extra = ' → puantaj:' + Object.keys(r.attendance).length;
+    if (r && r.noteIgnored) extra += ' → not: diğer telefondaki daha yeni';
+    if (r && payload.action === 'uploadPhoto' && r.name && r.name !== payload.name) extra += ' → ' + r.name;
     logEv(`OK ${sum} (${Date.now() - t0} ms)${extra}`);
     return r;
   } catch (e) { logEv(`HATA ${sum}: ${e && e.message}`); throw e; }
@@ -1379,9 +1431,146 @@ function blobToBase64(blob) {
     r.readAsDataURL(blob);
   });
 }
+// Apps Script 3.0 mı? (kişi bazında puantaj, ekip/ayar eşitleme, irsaliye numarası). Bir kez doğrulanınca hatırlanır.
+let srvV3 = (() => { try { return localStorage.getItem('sd_server_v3') === '1'; } catch { return false; } })();
+function markV3(on) {
+  srvV3 = !!on;
+  try { if (on) { localStorage.setItem('sd_server_v3', '1'); localStorage.setItem('sd_server_v2', '1'); } else localStorage.removeItem('sd_server_v3'); } catch { /* yoksay */ }
+  if (on) { needUpdate = false; if (lastError === UPDATE_MSG) setError(''); }
+  else needUpdate = true;
+}
+async function serverIsV3() {
+  if (srvV3) return true;
+  const r = await post({ action: 'ping' });
+  if (r && Number(r.v) >= 3) { markV3(true); return true; }
+  markV3(false); return false;
+}
+const liveDay = (key) => (state.day && state.day.key === key ? state.day : null);
+const dayGen = new Map(); // gün başına "sunucuya yazıldı" sayacı: eski getDay yanıtı yeni yazılanı geri almasın
+async function ackDay(qid, key, sentAtt, sentNote, res) {
+  const tgt = liveDay(key) || await dbGet('days', key);
+  if (!tgt) { await dbDel('queue', qid); return; }
+  dayGen.set(key, (dayGen.get(key) || 0) + 1);
+  let noteCh = false;
+  if (sentAtt && tgt.pend) for (const [n, v] of Object.entries(sentAtt)) if (n in tgt.pend && tgt.pend[n] === v) delete tgt.pend[n];
+  tgt.attDirty = !!tgt.pendAll || !!(tgt.pend && Object.keys(tgt.pend).length);
+  if (sentNote && tgt.noteAt === sentNote.at) {
+    tgt.noteDirty = false;
+    if (res && res.noteIgnored) { // diğer telefondaki not daha yeni: o kalır
+      tgt.note = res.note == null ? '' : String(res.note); tgt.noteAt = Number(res.noteUpdatedAt) || 0; noteCh = true;
+    }
+  }
+  tgt.synced = !tgt.attDirty && !isNoteDirty(tgt);
+  await dbPut('days', tgt);
+  if (tgt.synced) await dbDel('queue', qid);
+  if (noteCh && liveDay(key) && !noteDirty) renderNote();
+}
+async function syncDay(q) {
+  const key = dayKey(q.site, q.date);
+  let day = liveDay(key) || await dbGet('days', key);
+  if (!day) { await dbDel('queue', q.id); return false; }
+  const attD = isAttDirty(day), noteD = isNoteDirty(day) || !q.v;
+  if (!attD && !noteD) { await ackDay(q.id, key, null, null, null); return false; }
+  if (!(await serverIsV3())) {
+    // Eski Apps Script: kişi bazında puantajı bilmiyor. Yalnız not gönderilebilir (2.x); puantaj güncellemeyi bekler.
+    let v2 = false; try { v2 = localStorage.getItem('sd_server_v2') === '1'; } catch { /* yoksay */ }
+    if (!attD && v2) {
+      if (!day.noteAt) day.noteAt = day.updatedAt || Date.now();
+      const sentNote = { at: day.noteAt };
+      await post({ action: 'saveDay', site: day.site, date: day.date, note: day.note || '' });
+      await ackDay(q.id, key, null, sentNote, null);
+      return true;
+    }
+    setError(UPDATE_MSG); needUpdate = true; refreshBanner();
+    return false;
+  }
+  if (attD && (!day.pend || day.pendAll)) {
+    // 3.0 öncesinden kalan gönderilmemiş gün: sunucudakiyle karşılaştır, yalnız farkları gönder
+    const s = await post({ action: 'getDay', site: day.site, date: day.date });
+    day = liveDay(key) || day;
+    const sa = normAtt(s && s.attendance), la = normAtt(day.attendance), pend = {};
+    for (const [n, v] of Object.entries(la)) if (sa[n] !== v) pend[n] = v;
+    for (const n of Object.keys(sa)) if (!(n in la)) pend[n] = null;
+    day.pend = pend; day.pendAll = false;
+    await dbPut('days', day);
+  }
+  if (noteD && !day.noteAt) day.noteAt = day.updatedAt || Date.now();
+  const sentAtt = attD ? { ...(day.pend || {}) } : null;
+  const sentNote = noteD ? { at: day.noteAt } : null;
+  const payload = { action: 'saveDay', site: day.site, date: day.date };
+  if (sentAtt && Object.keys(sentAtt).length) payload.changes = sentAtt;
+  if (sentNote) { payload.note = day.note || ''; payload.noteUpdatedAt = sentNote.at; }
+  let res = null;
+  if (payload.changes || payload.note !== undefined) {
+    res = await post(payload);
+    if (!(res && Number(res.v) >= 3)) { // Apps Script eski sürüme döndürülmüş: puantaj yazılmadı (not yazıldı)
+      markV3(false); setError(UPDATE_MSG); refreshBanner();
+      if (payload.changes) return false;
+      res = null;
+    }
+  }
+  await ackDay(q.id, key, sentAtt, sentNote, res);
+  return !!res;
+}
+// Ekip listesi: gönderilecekler (ekipler hep; kişiler ve silinenler yalnız değişenler)
+function rosterChanges(r) {
+  const out = r.teams.map((t) => ({ type: 'team', id: t.id, name: t.name, hidden: !!t.hidden, updatedAt: t.updatedAt || 0 }));
+  for (const m of r.members) if (m.dirty) out.push({ type: 'member', id: m.id || '', name: m.name, team: m.teamId || '', updatedAt: m.updatedAt || 0 });
+  for (const g of r.gone || []) if (g.dirty) out.push({ type: 'member', id: g.id || '', name: g.name, team: g.teamId || '', updatedAt: g.updatedAt || 0, deleted: true });
+  return out;
+}
+const rosterDirtyAny = (r) => r.teams.some((t) => t.dirty) || r.members.some((m) => m.dirty) || (r.gone || []).some((g) => g.dirty);
+async function syncRoster(q) {
+  const r = await loadRoster();
+  if (!(await serverIsV3())) return syncRosterOld(q, r);
+  if (!r.pulled2) await applyRoster2(r, await post({ action: 'getRoster2', site: SYNC_SITE }), true);
+  let sent = false;
+  if (rosterDirtyAny(r)) {
+    const d = await post({ action: 'saveRoster2', site: SYNC_SITE, changes: rosterChanges(r) });
+    await applyRoster2(r, d, false);
+    sent = true;
+  }
+  const cur = await dbGet('queue', q.id);
+  if (cur && cur.rev === q.rev) { await dbDel('queue', q.id); rosterDirty.delete(q.site); }
+  return sent;
+}
+// Eski Apps Script (3.0 öncesi) için: tüm liste gönderilir
+async function syncRosterOld(q, r) {
+  try {
+    if (!r.teams.length) { await dbDel('queue', q.id); rosterDirty.delete(q.site); return false; } // hiç ekip yok: sunucuyu boşaltma
+    if (!r.pulled) { // sunucudakini hiç görmeden üzerine yazma: önce çek ve birleştir
+      const d = await post({ action: 'getRoster', site: SYNC_SITE });
+      mergeServerRoster(r, d.teams || []); r.pulled = true;
+      await saveRosterData(r);
+      if (r === state) rosterChangedUI();
+    }
+    await post({ action: 'saveRoster', site: SYNC_SITE, teams: toServerTeams(r) });
+    const cur = await dbGet('queue', q.id);
+    if (cur && cur.rev === q.rev) { await dbDel('queue', q.id); rosterDirty.delete(q.site); }
+    return true;
+  } catch (err) {
+    if (!err.server) throw err;
+    if (isUnknownAction(err)) { needUpdate = true; return false; }
+    throw err;
+  }
+}
+async function syncMeta1(q) {
+  const k = q.metaKey;
+  if (!SHARED_META.includes(k) || !(await serverIsV3())) { await dbDel('queue', q.id); return false; } // eski sunucu: ayar telefonda kalır
+  const at = metaAt()[k] || Date.now();
+  const d = await post({ action: 'saveMeta', metaKey: k, value: ls.get(k, null), updatedAt: at });
+  if ((metaAt()[k] || 0) <= at) {
+    if (d && d.applied === false && Number(d.updatedAt) > at) applyServerMeta(k, d.value, Number(d.updatedAt));
+    else setMetaAt(k, at);
+  }
+  const cur = await dbGet('queue', q.id);
+  if (cur && cur.rev === q.rev) await dbDel('queue', q.id);
+  return true;
+}
 async function sync(manual = false) {
   if (syncing) { resync = true; return; }
   syncing = true; refreshBanner();
+  let sentAny = false;
   try {
     const { url, key } = getSettings();
     const total = await pendingCount();
@@ -1390,31 +1579,21 @@ async function sync(manual = false) {
       return;
     }
     setError('');
-    // 1) günler ve silme işlemleri
-    let noDeleteSupport = false, deleteErr = '';
+    // Kuyruğu kaybolmuş ama gönderilmemiş gün kalmasın
+    for (const d of await dbAll('days')) {
+      if (d.synced === false && !(await dbGet('queue', `day|${d.site}|${d.date}`))) await dbPut('queue', { id: `day|${d.site}|${d.date}`, type: 'saveDay', v: 3, site: d.site, date: d.date });
+    }
+    // 1) günler, ekip listesi, ortak ayarlar
+    let rosterErr = '';
     for (const q of await dbAll('queue')) {
       if (q.type === 'saveRoster') {
-        try {
-          if (q.site !== SYNC_SITE) { await dbDel('queue', q.id); continue; } // eski şantiye başına kayıt: ortak listeye taşındı
-          const r = await loadRoster();
-          if (!r.teams.length) { await dbDel('queue', q.id); rosterDirty.delete(q.site); continue; } // hiç ekip yok: sunucuyu boşaltma
-          if (!r.pulled) { // sunucudakini hiç görmeden üzerine yazma: önce çek ve birleştir
-            const d = await post({ action: 'getRoster', site: SYNC_SITE });
-            mergeServerRoster(r, d.teams || []); r.pulled = true;
-            await saveRosterData(r);
-            if (r === state) { renderChips(); if (!$('settings').hidden) renderTeamSettings(); }
-          }
-          await post({ action: 'saveRoster', site: SYNC_SITE, teams: toServerTeams(r) });
-          const cur = await dbGet('queue', q.id);
-          if (cur && cur.rev === q.rev) { await dbDel('queue', q.id); rosterDirty.delete(q.site); }
-        } catch (err) {
-          if (!err.server) throw err;
-          if (/unknown action|Bilinmeyen işlem/i.test(err.message)) noDeleteSupport = true;
-          else deleteErr = err.message;
-        }
+        if (q.site !== SYNC_SITE) { await dbDel('queue', q.id); continue; } // eski şantiye başına kayıt: ortak listeye taşındı
+        try { if (await syncRoster(q)) sentAny = true; }
+        catch (err) { if (!err.server) throw err; rosterErr = err.message; }
         refreshBanner();
         continue;
       }
+      if (q.type === 'saveMeta') { if (await syncMeta1(q)) sentAny = true; refreshBanner(); continue; }
       if (q.type === 'deletePhoto') {
         // Drive'dan silme kaldırıldı (silme elle yapılır): eski kuyruk öğesi atılır.
         await dbDel('queue', q.id);
@@ -1422,54 +1601,45 @@ async function sync(manual = false) {
         refreshBanner();
         continue;
       }
-      const day = await dbGet('days', dayKey(q.site, q.date));
-      if (!day) { await dbDel('queue', q.id); continue; }
-      const stamp = day.updatedAt;
-      const payload = { action: 'saveDay', site: day.site, date: day.date };
-      const legacy = !q.v; // eski sürümden kalan kuyruk öğesi: ikisini de gönder
-      let v2 = false; try { v2 = localStorage.getItem('sd_server_v2') === '1'; } catch { /* yoksay */ }
-      if (legacy || isAttDirty(day)) payload.attendance = day.attendance;
-      if (legacy || isNoteDirty(day) || (!v2 && payload.attendance !== undefined)) payload.note = day.note || '';
-      // Eski Apps Script "attendance" yoksa o günün puantajını siler: güncellenene kadar sadece-not gönderimi bekler.
-      if (!v2 && payload.attendance === undefined && payload.note !== undefined) {
-        needUpdate = true; setError(UPDATE_MSG); refreshBanner(); continue;
-      }
-      if (payload.attendance !== undefined || payload.note !== undefined) await post(payload);
-      const cur = await dbGet('days', day.key);
-      if (cur && cur.updatedAt === stamp) { cur.synced = true; cur.attDirty = false; cur.noteDirty = false;
-        if (state.day && state.day.key === cur.key && state.day.updatedAt === stamp) { state.day.synced = true; state.day.attDirty = false; state.day.noteDirty = false; }
-        await dbPut('days', cur); await dbDel('queue', q.id); }
+      if (await syncDay(q)) sentAny = true;
       refreshBanner();
     }
     // 2) fotoğraflar, tek tek
     for (const p of await dbIndexAll('photos', 'status', 'pending')) {
       if (!p.blob) { p.status = 'sent'; await dbPut('photos', p); continue; }
       const base64 = await blobToBase64(p.blob);
-      const r = await post({ action: 'uploadPhoto', site: p.site, date: p.date, name: p.name, base64 });
+      const body = { action: 'uploadPhoto', site: p.site, date: p.date, name: p.name, base64 };
+      if (p.kind === 'irsaliye') { // numara Drive'da verilir; tekrar gönderimde aynı dosya dönsün diye kimlik
+        if (!p.uid) { p.uid = newId(); const c0 = await dbGet('photos', p.id); if (c0) { c0.uid = p.uid; await dbPut('photos', c0); } }
+        body.kind = 'irsaliye'; body.uid = p.uid;
+      }
+      const r = await post(body);
+      sentAny = true;
       const cur = await dbGet('photos', p.id);
       if (!cur) continue; // yüklenirken listeden kaldırıldı; Drive'daki dosyaya dokunulmaz
       if (!cur.thumbData && cur.blob) { // eski kayıt: büyük dosyadan küçük resmi yazı olarak üret
         try { const bm = await createImageBitmap(cur.blob); cur.thumbData = 'data:image/jpeg;base64,' + await blobToBase64(await toJpeg(bm, 240, 0.7)); } catch { /* yoksay */ }
       }
+      if (r && typeof r.name === 'string' && r.name) cur.name = r.name; // Drive'ın verdiği son ad (irsaliye numarası)
       cur.status = 'sent'; cur.fileId = r.fileId || ''; cur.blob = null; cur.thumb = null; // küçük resim yazı olarak kalır (iOS'ta Blob bozulabiliyor)
       await dbPut('photos', cur);
       refreshBanner();
       if (state.site === p.site && state.date === p.date) renderPhotos();
     }
-    // kuyruktaki Drive silmeleri için sonuç iletisi (öteki işler yine de gönderildi)
-    if (noDeleteSupport || needUpdate) setError(UPDATE_MSG);
-    else if (deleteErr) setError(deleteErr);
+    if (needUpdate) setError(UPDATE_MSG);
+    else if (rosterErr) setError(rosterErr);
   } catch (err) {
     setError(err.message || 'Gönderim başarısız.');
   } finally {
     syncing = false; refreshBanner();
     if (resync && !lastError) { resync = false; sync(); } else resync = false;
+    if (sentAny && !lastError) liveSoon(); // kendi gönderiminden sonra diğer telefonun değişikliklerini de al
   }
 }
 let syncTimer;
 function scheduleSync(ms = 1500) { clearTimeout(syncTimer); syncTimer = setTimeout(() => sync(), ms); }
 $('syncNow').addEventListener('click', () => sync(true));
-window.addEventListener('online', () => { sync(); pullDay(true); pullRoster(); });
+window.addEventListener('online', () => { sync(); pullDay(true); pullRoster().then(pullMeta); });
 setInterval(() => { if (document.visibilityState === 'visible') sync(); }, 60000);
 
 // ---------- Sunucudan çekme (Drive > telefon) ----------
@@ -1478,7 +1648,7 @@ const isUnknownAction = (err) => err && err.server && /unknown action|Bilinmeyen
 const loadRoster = async () => state.rosterLoaded ? state : readShared();
 const normName = (s) => String(s == null ? '' : s).trim().replace(/\s+/g, ' ');
 const toServerTeams = (r) => r.teams.map((t) => ({ name: t.name, hidden: !!t.hidden, members: r.members.filter((m) => m.teamId === t.id).map((m) => m.name) }));
-// Sunucudaki ekipleri yerele ekler (hiçbir şey silmez). Dönüş: {changed, push}
+// (Eski Apps Script) Sunucudaki ekipleri yerele ekler (hiçbir şey silmez). Dönüş: {changed, push}
 function mergeServerRoster(r, serverTeams, moveArchived = false) {
   let changed = false;
   const findTeam = (name) => r.teams.find((t) => lcTr(t.name) === lcTr(name));
@@ -1505,11 +1675,92 @@ function mergeServerRoster(r, serverTeams, moveArchived = false) {
   }
   return { changed, push };
 }
+// (Apps Script 3.0) Varlık başına "son yazan kazanır": ekip kimlikle, kişi adla eşleşir. Silinenler "silindi" kaydıyla gelir.
+// Yerelde daha yeni (gönderilmemiş) değişiklik ezilmez, gönderilmek üzere işaretlenir. Dönüş: {changed, push}
+function mergeRoster2(r, srv) {
+  r.gone = r.gone || [];
+  let changed = false, push = false;
+  const sTeams = Array.isArray(srv.teams) ? srv.teams : [], sMembers = Array.isArray(srv.members) ? srv.members : [];
+  const sIds = new Set(sTeams.map((t) => String(t.id || '')));
+  const remap = (from, to) => {
+    for (const m of r.members) if (m.teamId === from) m.teamId = to;
+    for (const g of r.gone) if (g.teamId === from) g.teamId = to;
+    if (ui.filterTeam === from) ui.filterTeam = to;
+    if (ui.closed.has(from)) { ui.closed.delete(from); ui.closed.add(to); }
+  };
+  for (const st of sTeams) {
+    const name = normName(st.name), id = String(st.id || ''); if (!name || !id) continue;
+    const su = Number(st.updatedAt) || 0;
+    let t = r.teams.find((x) => x.id === id);
+    if (!t && !st.deleted) { // aynı adlı yerel ekip (başka kimlikle): sunucunun kimliğini al
+      t = r.teams.find((x) => !sIds.has(x.id) && lcTr(x.name) === lcTr(name));
+      if (t) { remap(t.id, id); t.id = id; changed = true; }
+    }
+    if (!t) { if (!st.deleted) { r.teams.push({ id, name, hidden: !!st.hidden, updatedAt: su }); changed = true; } continue; }
+    if ((t.updatedAt || 0) > su) { t.dirty = true; push = true; continue; }
+    if (st.deleted) { r.teams = r.teams.filter((x) => x !== t); changed = true; continue; }
+    if (t.name !== name || !!t.hidden !== !!st.hidden) { t.name = name; t.hidden = !!st.hidden; changed = true; }
+    t.updatedAt = su; t.dirty = false;
+  }
+  for (const t of r.teams) if (!sIds.has(t.id)) { t.dirty = true; push = true; }
+  const tIds = new Set(r.teams.map((t) => t.id));
+  const live = new Map(r.members.map((m) => [lcTr(m.name), m]));
+  const dead = new Map(r.gone.map((g) => [lcTr(g.name), g]));
+  const seen = new Set();
+  for (const sm of sMembers) {
+    const name = normName(sm.name); if (!name) continue;
+    const k = lcTr(name); seen.add(k);
+    const su = Number(sm.updatedAt) || 0;
+    const l = live.get(k), g = dead.get(k), e = l || g;
+    if (e && (e.updatedAt || 0) > su) { e.dirty = true; push = true; continue; }
+    if (sm.deleted) {
+      if (l) { r.members = r.members.filter((x) => x !== l); live.delete(k); changed = true; }
+      if (g) { g.updatedAt = su; g.dirty = false; if (sm.id) g.id = sm.id; }
+      else { const ng = { name, id: sm.id || '', teamId: sm.team || '', updatedAt: su }; r.gone.push(ng); dead.set(k, ng); }
+      continue;
+    }
+    if (g) { r.gone = r.gone.filter((x) => x !== g); dead.delete(k); }
+    let tid = tIds.has(sm.team) ? sm.team : null;
+    if (!tid) { const ek = ensureEkipsiz(r); tid = ek.id; if (!tIds.has(tid)) { tIds.add(tid); push = true; } }
+    if (!l) { const nm = { name, teamId: tid, id: sm.id || '', updatedAt: su }; r.members.push(nm); live.set(k, nm); changed = true; continue; }
+    if (l.teamId !== tid || l.name !== name) { l.teamId = tid; l.name = name; changed = true; }
+    l.updatedAt = su; l.dirty = false; if (sm.id) l.id = sm.id;
+  }
+  for (const m of r.members) {
+    if (!seen.has(lcTr(m.name))) { m.dirty = true; push = true; }
+    if (!tIds.has(m.teamId)) { const ek = ensureEkipsiz(r); if (!tIds.has(ek.id)) { tIds.add(ek.id); push = true; } m.teamId = ek.id; changed = true; }
+  }
+  for (const g of r.gone) if (!seen.has(lcTr(g.name))) { g.dirty = true; push = true; }
+  return { changed, push };
+}
+async function applyRoster2(r, data, first) {
+  if (!data || !Array.isArray(data.teams) || !Array.isArray(data.members)) return false;
+  const { changed, push } = mergeRoster2(r, data);
+  if (first) r.pulled2 = true;
+  r.pulled = true;
+  await saveRosterData(r);
+  if (r === state && changed) rosterChangedUI();
+  return push;
+}
+// Ekip listesi değişince ana ekranı/ayarları yeniden çiz; kullanıcı bir kutuya yazıyorsa bitene kadar beklet.
+const typingIn = (box) => { const a = document.activeElement; return !!a && !!box && box.contains(a) && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName); };
+let chipsLater = false, setLater = false;
+function rosterChangedUI() {
+  if (!state.site || !state.day) return;
+  if (typingIn($('chips'))) chipsLater = true; else renderChips();
+  if (!$('settings').hidden) { if (typingIn($('teamSettings'))) setLater = true; else renderTeamSettings(); }
+}
+document.addEventListener('focusout', () => setTimeout(() => {
+  if (chipsLater && !typingIn($('chips'))) { chipsLater = false; renderChips(); }
+  if (setLater && !typingIn($('teamSettings'))) { setLater = false; if (!$('settings').hidden) renderTeamSettings(); }
+}, 0));
 // Gün önbelleği: kayıt yerelde (IndexedDB) durur, ekranda hemen gösterilir; sunucudan arka planda tazelenir.
-// Her kayıtta fetchedAt (son indirme zamanı) tutulur. Yerelde değiştirilmiş (kirli) puantaj/not hiçbir zaman ezilmez.
+// Her kayıtta fetchedAt (son indirme zamanı) tutulur. Yerelde değiştirilmiş (gönderilmemiş) kişiler ve not hiçbir zaman ezilmez:
+// sunucunun puantajı alınır, bekleyen yerel değişiklikler (pend) üstüne uygulanır.
 const DAY_FRESH_MS = 60 * 1000, PREFETCH_FRESH_MS = 5 * 60 * 1000, PREFETCH_CONC = 3;
 const inflight = new Map(); // "site|tarih" -> Promise
 const normAtt = (o) => { const a = {}; for (const [n, v] of Object.entries(o || {})) if (Number(v) > 0) a[n] = Number(v); return a; };
+const sameAtt = (a, b) => { const x = normAtt(a), y = normAtt(b), kx = Object.keys(x); return kx.length === Object.keys(y).length && kx.every((k) => y[k] === x[k]); };
 const shownMain = (site, date) => !!state.day && state.site === site && state.date === date && state.day.key === dayKey(site, date);
 // DOM'daki çipleri state'e göre tek tek eşitler. Düzen değişecekse false döner (tam çizim gerekir).
 function reconcileChips() {
@@ -1536,31 +1787,45 @@ function reconcileChips() {
   updateCounts();
   return true;
 }
-const refreshChips = () => { if (!reconcileChips()) renderChips(); };
-// Sunucudan bir günü indirir; aynı gün için aynı anda tek istek. Ekranda gösterilen gün ise yalnızca değişen kısım güncellenir.
-function fetchDay(site, date) {
+const refreshChips = () => { if (!reconcileChips()) { if (typingIn($('chips'))) chipsLater = true; else renderChips(); } };
+// Sunucudan bir günü indirir; aynı gün için aynı anda tek istek (fresh: süren istek bitince yeniden sorar).
+// Ekranda gösterilen gün ise yalnızca değişen kısım güncellenir.
+function fetchDay(site, date, fresh = false) {
   const k = dayKey(site, date);
-  if (inflight.has(k)) return inflight.get(k);
+  if (inflight.has(k)) return fresh ? inflight.get(k).then(() => fetchDay(site, date)) : inflight.get(k);
   const p = (async () => {
+    const g0 = dayGen.get(k) || 0;
     let data;
     try { data = await post({ action: 'getDay', site, date }); } catch { return null; }
     if (!data) return null;
-    const att = normAtt(data.attendance), note = data.note == null ? '' : String(data.note);
+    if ((dayGen.get(k) || 0) !== g0) return null; // bu arada bu gün sunucuya yazıldı: yanıt eski, sonraki yenilemede alınır
+    const att = normAtt(data.attendance), note = data.note == null ? '' : String(data.note), noteAt = Number(data.noteUpdatedAt) || 0;
     const rec0 = await dbGet('days', k);
     const main = shownMain(site, date);
     const base = main ? state.day : (rec0 || { key: k, site, date, attendance: {}, note: '', updatedAt: 0, synced: true });
     let attCh = false, noteCh = false;
-    if (!isAttDirty(base) && JSON.stringify(att) !== JSON.stringify(normAtt(base.attendance))) { base.attendance = att; attCh = true; }
-    if (!isNoteDirty(base) && !(main && (noteDirty || document.activeElement === $('note'))) && note !== (base.note || '')) { base.note = note; noteCh = true; }
+    const ad = isAttDirty(base);
+    if (!(ad && (!base.pend || base.pendAll))) { // 3.0 öncesinden kalan gönderilmemiş gün: gönderilene kadar yerel kalır
+      const merged = { ...att };
+      if (ad && base.pend) for (const [n, v] of Object.entries(base.pend)) { if (v > 0) merged[n] = v; else delete merged[n]; }
+      if (!sameAtt(merged, base.attendance)) { base.attendance = merged; attCh = true; }
+    }
+    const editing = main && (noteDirty || document.activeElement === $('note'));
+    const nd = isNoteDirty(base);
+    if (!editing && (!nd || noteAt > (base.noteAt || 0))) { // not: son yazan kazanır
+      if (note !== (base.note || '')) { base.note = note; noteCh = true; }
+      if (nd) { base.noteDirty = false; base.attDirty = ad; base.synced = !ad; }
+      base.noteAt = noteAt;
+    }
     base.fetchedAt = Date.now();
     await dbPut('days', base);
     if (shownMain(site, date)) {
-      state.loading = false;
+      state.loading = false; markPulled();
       if (attCh) refreshChips(); else updateCounts();
       if (noteCh) renderNote();
     } else if (state.site && state.date === date && site === otherSite() && state.day) {
       const oa = base.attendance || {};
-      if (JSON.stringify(oa) !== JSON.stringify(state.otherAtt || {})) { state.otherAtt = oa; refreshChips(); }
+      if (!sameAtt(oa, state.otherAtt || {})) { state.otherAtt = oa; refreshChips(); }
     }
     return base;
   })().finally(() => {
@@ -1604,22 +1869,102 @@ const pullDay = (force = false) => prefetchWindow(force);
 async function pullRoster() {
   if (!canPull()) return;
   let data;
+  try { data = await post({ action: 'getRoster2', site: SYNC_SITE }); }
+  catch (err) { if (isUnknownAction(err)) { markV3(false); return pullRosterOld(); } return; }
+  if (!data || !Array.isArray(data.teams) || !Array.isArray(data.members)) return;
+  markV3(true); if (lastError === UPDATE_MSG) { setError(''); refreshBanner(); }
+  const r = await loadRoster();
+  const push = await applyRoster2(r, data, true);
+  if (push || (rosterDirtyAny(r) && !(await dbGet('queue', `roster|${SYNC_SITE}`)))) await enqueueRoster();
+}
+// Eski Apps Script (getRoster2 yok): 2.x davranışı
+async function pullRosterOld() {
+  let data;
   try { data = await post({ action: 'getRoster', site: SYNC_SITE }); }
   catch (err) { if (isUnknownAction(err)) { needUpdate = true; setError(UPDATE_MSG); refreshBanner(); } return; }
   if (!data || !Array.isArray(data.teams)) return;
   try { localStorage.setItem('sd_server_v2', '1'); } catch { /* yoksay */ }
-  needUpdate = false; if (lastError === UPDATE_MSG) { setError(''); refreshBanner(); }
+  needUpdate = true; refreshBanner();
   const r = await loadRoster();
   if (rosterDirty.has(SYNC_SITE) || await dbGet('queue', `roster|${SYNC_SITE}`)) { scheduleSync(); return; } // yerel değişiklik önce gider
   const { changed, push } = mergeServerRoster(r, data.teams, true);
   const first = !r.pulled; r.pulled = true;
   if (changed || first) await saveRosterData(r);
-  if (r === state) {
-    if (changed) renderChips();
-    if (changed && !$('settings').hidden) renderTeamSettings();
-  }
+  if (r === state && changed) rosterChangedUI();
   if (push) await enqueueRoster();
 }
+// ---------- Ortak ayarlar (Drive: AYARLAR) ----------
+const sameJSON = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const isObj = (o) => !!o && typeof o === 'object' && !Array.isArray(o);
+// İlk eşitlemede (bu telefonun ayarı Drive'a hiç gitmemişse) iki telefonun ayarları birleştirilir.
+function mergeMetaValue(k, srv, loc) {
+  if (!isObj(srv) || !isObj(loc)) return srv != null ? srv : loc;
+  if (k === 'sd_site_hide') {
+    const out = { ...srv };
+    for (const [site, arr] of Object.entries(loc)) {
+      const a = Array.isArray(out[site]) ? out[site].slice() : [];
+      for (const n of Array.isArray(arr) ? arr : []) if (!a.some((x) => lcTr(x) === lcTr(n))) a.push(n);
+      out[site] = a;
+    }
+    return out;
+  }
+  return { ...loc, ...srv };
+}
+function metaUI(k) {
+  if (k === 'sd_site_hide') rosterChangedUI();
+  else if (k === 'sd_arsiv') { if (!$('settings').hidden && !typingIn($('teamSettings'))) renderTeamSettings(); }
+  else if (k === 'sd_coords') { if (!$('settings').hidden) renderLocInfo(); }
+}
+function applyServerMeta(k, value, at) {
+  const changed = !sameJSON(ls.get(k, null), value);
+  ls.set(k, value, true); setMetaAt(k, at);
+  if (changed) metaUI(k);
+}
+async function pullMeta() {
+  if (!canPull() || !srvV3) return;
+  let d;
+  try { d = await post({ action: 'getMeta' }); }
+  catch (err) { if (isUnknownAction(err)) markV3(false); return; }
+  const items = (d && d.items) || {}, at = metaAt();
+  for (const k of SHARED_META) {
+    if (await dbGet('queue', 'meta|' + k)) continue; // bu telefonun değişikliği önce gider (sunucu son yazanı seçer)
+    const s = items[k], la = at[k] || 0, local = ls.get(k, null);
+    if (!s) { if (local != null) { if (!la) setMetaAt(k, Date.now()); await enqueueMeta(k); } continue; }
+    const su = Number(s.updatedAt) || 0;
+    if (!la && local != null && !sameJSON(local, s.value)) { // ilk eşitleme: birleştir
+      const merged = mergeMetaValue(k, s.value, local);
+      if (sameJSON(merged, s.value)) applyServerMeta(k, s.value, su);
+      else { ls.set(k, merged, true); setMetaAt(k, Math.max(Date.now(), su + 1)); metaUI(k); await enqueueMeta(k); }
+      continue;
+    }
+    if (su > la) applyServerMeta(k, s.value, su);
+    else if (la > su) await enqueueMeta(k);
+  }
+}
+// ---------- Canlı yenileme: uygulama açık ve internet varken her 30 sn ----------
+let lastPullAt = 0, liveTimer = null, liveBusy = false, lastLiveAt = 0;
+const liveMs = () => Number(window.__syncIntervalMs) || 30000;
+function markPulled() { lastPullAt = Date.now(); renderAgo(); }
+function renderAgo() {
+  const el = $('lastSync'); if (!el) return;
+  if (!lastPullAt || !state.site) { el.hidden = true; return; }
+  const s = Math.max(0, Math.round((Date.now() - lastPullAt) / 1000));
+  const txt = 'son eşitleme: ' + (s < 5 ? 'az önce' : s < 60 ? s + ' sn önce' : Math.floor(s / 60) + ' dk önce');
+  if (el.textContent !== txt) el.textContent = txt;
+  el.hidden = false;
+}
+setInterval(() => { if (document.visibilityState === 'visible') renderAgo(); }, 1000);
+async function liveTick() {
+  if (liveBusy || document.visibilityState !== 'visible' || !state.site || !state.day || !canPull()) return;
+  liveBusy = true; lastLiveAt = Date.now();
+  try {
+    const site = state.site, date = state.date, o = otherSite();
+    await Promise.all([fetchDay(site, date, true), o ? fetchDay(o, date, true) : null, pullRoster().then(pullMeta)]);
+  } catch { /* sonraki turda */ } finally { liveBusy = false; }
+}
+function liveSoon() { if (Date.now() - lastLiveAt > 3000) setTimeout(liveTick, 0); }
+function scheduleLive() { clearTimeout(liveTimer); liveTimer = setTimeout(async () => { await liveTick(); scheduleLive(); }, liveMs()); }
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { liveTick(); scheduleLive(); renderAgo(); } });
 
 // ---------- Ayarlar ----------
 function renderSurum() {
@@ -1666,7 +2011,7 @@ function openSettings() {
   renderSurum();
   const s = getSettings(); $('setUrl').value = s.url; $('setKey').value = s.key;
   $('testResult').textContent = ''; ui.hideTeam = null; ui.siteHideTeam = null; ui.delName = null; ui.archName = null; ui.editName = null; renderTeamSettings(); renderLocInfo(); showAnim($('settings'), 'sheet-in', 380);
-  pullRoster();
+  pullRoster().then(pullMeta);
 }
 function readSettingsForm() { ls.set('sd_settings', { url: $('setUrl').value.trim(), key: $('setKey').value.trim() }); }
 function autoSaveSettings() { readSettingsForm(); $('testResult').textContent = 'Kaydedildi ✓'; }
@@ -1682,11 +2027,12 @@ $('testConn').addEventListener('click', async () => {
   try { await post({ action: 'ping' }); }
   catch (e) { out.textContent = 'Hata: ' + e.message; return; }
   try {
-    await post({ action: 'getRoster', site: state.site || 'gundogdu' });
+    await post({ action: 'getRoster2', site: SYNC_SITE });
     try { localStorage.setItem('sd_server_v2', '1'); } catch { /* yoksay */ }
-    out.textContent = 'Bağlantı başarılı. Apps Script: GÜNCEL ✔';
-    needUpdate = false; if (lastError === UPDATE_MSG) setError(''); refreshBanner();
-    pullRoster();
+    markV3(true);
+    out.textContent = 'Bağlantı başarılı. Apps Script: GÜNCEL (3.0) ✔';
+    refreshBanner();
+    pullRoster().then(pullMeta); scheduleSync(300);
   } catch (e) {
     out.textContent = isUnknownAction(e)
       ? "Bağlantı var ama Apps Script ESKİ sürümde çalışıyor. Dağıt → Dağıtımları yönet → kalem → Sürüm: 'Yeni sürüm' → Dağıt."
@@ -1742,6 +2088,7 @@ async function init() {
   const found = await detectSite();
   if (found && found !== state.site) { await selectSite(found); toast(`Konuma göre ${SITES[found]} açıldı.`); }
   sync();
+  scheduleLive();
 }
 init();
 

@@ -61,16 +61,25 @@ Bu klasördeki dosyalar (`index.html`, `app.css`, `app.js`, `sw.js`, `manifest.w
 
 ## Apps Script'i güncelleme
 
-Uygulamaya yeni bir özellik (ör. ekip listesinin Drive'a kaydı) eklenince `Code.gs` de değişir. Güncellemek için:
+Uygulamaya yeni bir özellik eklenince `Code.gs` de değişir. **Sürüm 3.0 (iki telefon aynı anda) için güncelleme şarttır**; güncellenmezse puantaj gönderilmez ve uygulama "Apps Script'i güncelleyin" uyarısı gösterir (veriler telefonda bekler, kaybolmaz). Güncellemek için:
 
 1. script.google.com adresinde projenizi açın.
 2. Sol taraftaki `Code.gs` içindeki her şeyi silin, yerine `https://raw.githubusercontent.com/sezerinci59-sys/g-ndo-dudefter/main/apps-script/Code.gs` adresindeki yeni kodu yapıştırın. **Kaydet**'e basın.
 3. **Dağıt → Dağıtımları yönet → ✎ (kalem) → Sürüm: Yeni sürüm → Dağıt**.
+4. Telefonda Ayarlar > **Bağlantıyı test et**: "Apps Script: GÜNCEL (3.0) ✔" yazmalı.
 
-Web uygulaması adresi değişmez, kurulumu tekrar yapmanız gerekmez.
+Web uygulaması adresi değişmez, kurulumu (`kurulum`) tekrar yapmanız gerekmez. İki telefon aynı adresi ve aynı gizli anahtarı kullanır.
+
+3.0 ile E-Tablo'da (Puantaj - Gündoğdu) şunlar değişir — elle düzenlemeyin:
+
+- **EKİPLER** sekmesine D–G sütunları eklenir: Güncellenme (ms), Silindi (EVET), ID, Ekip ID. Her ekibin bir başlık satırı olur (İsim boş). Silinen kişinin satırı "Silindi = EVET" ile kalır; bu sayede başka telefon onu geri getirmez. Eski satırlar ilk açılışta kendiliğinden bu biçime çevrilir.
+- Yeni **AYARLAR** sekmesi: şantiyede gizlenen ekipler, sigorta çıkışı bilgileri ve şantiye konumları (iki telefon ortak kullanır).
+- **NOTLAR** sekmesindeki "Güncellenme" artık tarih-saat değeridir; iki telefonda aynı güne not yazılırsa en son yazılan kalır.
 
 ## Bilinmesi gerekenler
 
 - Gizli anahtarı kimseyle paylaşmayın. Sızarsa Apps Script'te `anahtariYenile` fonksiyonunu çalıştırıp uygulamada yenisini girin.
 - Uygulama güncellenince iPhone eski sürümü bir süre gösterebilir; uygulamayı tamamen kapatıp açın.
 - İsim değiştirirseniz E-Tabloda eski isim satırı eski günlerle birlikte kalabilir; yeni isim ayrı satır olur.
+- İki telefon aynı anda kullanılabilir: puantaj kişi bazında gönderilir, uygulama açıkken 30 saniyede bir diğer telefonun değişikliklerini alır ("son eşitleme: … önce").
+- İki telefonda aynı ayara (ör. şantiyede gizlenen ekipler) birkaç saniye arayla farklı değişiklik yapılırsa son yapılan geçerli olur.
