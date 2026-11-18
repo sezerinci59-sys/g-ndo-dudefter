@@ -259,19 +259,46 @@ function popChip(b, i = 0) {
   b.style.animationDelay = d ? d + 'ms' : '';
   playClass(b, 'pop', 280 + d);
 }
+// Sayı kayması: segs = [metin, sayı, metin, sayı, ...]; değişen sayı eski değeri yukarı çıkarır, yenisi alttan gelir.
+// Eski değer ::before ile çizilir (data-old), böylece textContent hep tek ve doğru kalır.
+function setRoll(el, segs, animate) {
+  if (typeof segs === 'string') { if (el.textContent !== segs) el.textContent = segs; el._rs = null; return; }
+  const nums = el.querySelectorAll('.num');
+  const ok = el._rs && el._rs.length === segs.length && nums.length === (segs.length >> 1) && segs.every((x, i) => i % 2 || el._rs[i] === x);
+  if (!ok) {
+    el.textContent = '';
+    segs.forEach((x, i) => {
+      if (i % 2) { const n = document.createElement('span'); n.className = 'num'; n.textContent = String(x); el.appendChild(n); }
+      else if (x) el.appendChild(document.createTextNode(x));
+    });
+    el._rs = segs.slice(); return;
+  }
+  const nn = [...nums];
+  segs.forEach((x, i) => {
+    if (i % 2 === 0 || String(el._rs[i]) === String(x)) return;
+    const n = nn[i >> 1], old = n.textContent;
+    n.textContent = String(x);
+    if (animate && !reduceMotion.matches) {
+      n.dataset.old = old; clearTimeout(n._rt);
+      n.classList.remove('roll'); void n.offsetWidth; n.classList.add('roll');
+      n._rt = setTimeout(() => { n.classList.remove('roll'); delete n.dataset.old; }, 260);
+    }
+  });
+  el._rs = segs.slice();
+}
 // Sadece metinleri günceller (yeniden kurma yok)
 function updateCounts() {
   const att = state.day.attendance, label = state.date === today() ? 'bugün' : 'bu gün';
   for (const sec of $('chips').querySelectorAll('section.team[data-team]')) {
     const mem = teamMembers(sec.dataset.team);
     const present = mem.filter((m) => att[m.name] > 0).length;
-    const c = sec.querySelector('.team-count'), txt = `${label} ${present}/${mem.length}`;
-    if (c && c.textContent !== txt) c.textContent = txt;
+    const c = sec.querySelector('.team-count');
+    if (c) setRoll(c, [label + ' ', present, '/', mem.length], true);
   }
   const vals = Object.values(att).filter((v) => v > 0);
   const sum = vals.reduce((a, b) => a + b, 0);
-  const l2 = state.date === today() ? 'Bugün' : 'Bu gün', st = state.loading ? 'Yükleniyor…' : `${l2}: ${vals.length} kişi (${fmtNum(sum)} gün)`;
-  if ($('summary').textContent !== st) $('summary').textContent = st;
+  const l2 = state.date === today() ? 'Bugün' : 'Bu gün';
+  setRoll($('summary'), state.loading ? 'Yükleniyor…' : [l2 + ': ', vals.length, ' kişi (', fmtNum(sum), ' gün)'], true);
 }
 // Tek tek chip günceller. Düzenin değişeceği durumda (gizli/listede olmayan grup) false döner: tam yeniden çizim gerekir.
 function patchChips(names, stagger = false) {
@@ -315,7 +342,7 @@ function renderChips() {
     const head = document.createElement('div'); head.className = 'team-head';
     const h = document.createElement('h3'); h.textContent = t.name;
     const cnt = document.createElement('span'); cnt.className = 'team-count';
-    cnt.textContent = `${label.toLowerCase()} ${present}/${mem.length}`;
+    setRoll(cnt, [label.toLowerCase() + ' ', present, '/', mem.length], false);
     const all = document.createElement('button'); all.type = 'button'; all.className = 'btn small ghost';
     all.dataset.all = t.id; all.textContent = 'Hepsi geldi';
     head.append(h, cnt, all); sec.appendChild(head);
@@ -349,23 +376,25 @@ function renderChips() {
   }
   const vals = Object.values(att).filter((v) => v > 0);
   const sum = vals.reduce((a, b) => a + b, 0);
-  $('summary').textContent = state.loading ? 'Yükleniyor…' : `${label}: ${vals.length} kişi (${fmtNum(sum)} gün)`;
+  setRoll($('summary'), state.loading ? 'Yükleniyor…' : [label + ': ', vals.length, ' kişi (', fmtNum(sum), ' gün)'], false);
 }
 function renderNote() {
   const ta = $('note');
   if (document.activeElement !== ta) ta.value = state.day.note || '';
 }
-let armedPhoto = null, armTimer = null, photoCtx = '', photoSeen = new Set();
+let armedPhoto = null, armTimer = null, photoCtx = '', photoSeen = new Set(), photoStat = new Map();
 function disarmPhoto() { clearTimeout(armTimer); armedPhoto = null; }
 async function renderPhotos() {
   const list = (await dbIndexAll('photos', 'siteDate', [state.site, state.date])).filter((p) => !p.deleted);
   photoUrls.forEach((u) => URL.revokeObjectURL(u)); photoUrls = [];
   const grid = $('photoGrid'); grid.textContent = '';
   const ctx = state.site + '|' + state.date, fresh = ctx !== photoCtx;
-  if (fresh) { photoCtx = ctx; photoSeen = new Set(); }
+  if (fresh) { photoCtx = ctx; photoSeen = new Set(); photoStat = new Map(); }
   for (const p of list) {
     const isNew = !fresh && !photoSeen.has(p.id) && !reduceMotion.matches; photoSeen.add(p.id);
-    const div = document.createElement('div'); div.className = 'photo ' + (p.status === 'sent' ? 'sent' : 'pending') + (isNew ? ' pin' : '');
+    const flip = !reduceMotion.matches && photoStat.get(p.id) === 'pending' && p.status === 'sent'; photoStat.set(p.id, p.status === 'sent' ? 'sent' : 'pending');
+    const div = document.createElement('div'); div.className = 'photo ' + (p.status === 'sent' ? 'sent' : 'pending') + (isNew ? ' pin' : '') + (flip ? ' flip' : '');
+    if (flip) setTimeout(() => div.classList.remove('flip'), 400);
     if (isNew) setTimeout(() => div.classList.remove('pin'), 360);
     const img = document.createElement('img');
     const noThumb = () => { div.classList.add('nothumb'); img.remove(); };
@@ -424,12 +453,14 @@ async function flushNote() {
   $('noteState').textContent = 'Kaydedildi';
 }
 const NAV_MS = 340;
+let booted = false;
 async function selectSite(site) {
   await flushNote();
   state.site = site; ls.set('sd_site', site);
   await renderAll();
   $('picker').hidden = true;
-  playClass(document.querySelector('main'), 'pg-up', 320);
+  if (!booted) { booted = true; playClass(document.querySelector('main'), 'boot', 360 + 70 * 5); }
+  else playClass(document.querySelector('main'), 'pg-up', 320);
   pullDay(); pullRoster();
 }
 // Gün geçişi: animasyon sürerken gelen istekler üst üste binmez; yalnızca en son hedef tarih sıraya alınır.
@@ -450,6 +481,7 @@ async function setDate(date) {
         state.date = d;
         await renderAll();
         playClass(document.querySelector('main'), dir, NAV_MS);
+        releaseOut();
         pullDay();
         if (!reduceMotion.matches) await wait(NAV_MS);
       } else renderDate();
@@ -908,23 +940,80 @@ $('copyYesterday').addEventListener('click', async () => {
 });
 
 // ---------- Kaydırarak gün değiştirme ----------
-const swipe = { x: 0, y: 0, on: false, cancel: false, busy: false };
+const swipe = { x: 0, y: 0, on: false, cancel: false, mode: '', lx: 0, lt: 0, vx: 0, dx: 0, cards: [] };
+const swipeCards = () => [...document.querySelectorAll('main .card')];
+const rubber = (dx) => { const a = Math.abs(dx), m = a <= 80 ? a : 80 + (a - 80) * 0.5; return dx < 0 ? -m : m; };
+let outAnims = [];
+// Kaydırma çıkış animasyonu, yeni günün giriş animasyonu başlayınca (aynı karede) bırakılır: arada eski içerik görünmez.
+function releaseOut() { for (const a of outAnims) { try { a.effect.target.style.transform = ''; a.effect.target.style.opacity = ''; a.cancel(); } catch { /* yoksay */ } } outAnims = []; }
+function swipeSpring() {
+  const x = swipe.dx;
+  for (const c of swipe.cards) {
+    c.style.transform = ''; c.style.willChange = '';
+    if (x && !reduceMotion.matches) c.animate([{ transform: `translateX(${x}px)` }, { transform: 'translateX(0)' }], { duration: 260, easing: 'cubic-bezier(.34,1.56,.64,1)' });
+  }
+  swipe.dx = 0; swipe.cards = [];
+}
+function swipeCommit(dir) {
+  const x = swipe.dx, cards = swipe.cards;
+  swipe.dx = 0; swipe.cards = [];
+  if (navBusy || reduceMotion.matches || !cards.length) {
+    cards.forEach((c) => { c.style.transform = ''; c.style.willChange = ''; });
+    stepDay(dir); return;
+  }
+  const to = -dir * innerWidth * 0.5;
+  outAnims = cards.map((c) => c.animate([{ transform: `translateX(${x}px)`, opacity: 1 }, { transform: `translateX(${to}px)`, opacity: 0 }], { duration: 160, easing: 'cubic-bezier(.4,0,1,1)', fill: 'forwards' }));
+  cards.forEach((c) => { c.style.transform = ''; c.style.willChange = ''; });
+  Promise.all(outAnims.map((a) => a.finished.catch(() => {}))).then(() => stepDay(dir));
+}
 {
   const sc = $('scroller');
   sc.addEventListener('touchstart', (e) => {
     swipe.on = e.touches.length === 1 && !e.target.closest('input,textarea,select,[contenteditable],label.datelabel') && !!state.site;
-    swipe.cancel = false; swipe.x = e.touches[0].clientX; swipe.y = e.touches[0].clientY;
+    swipe.cancel = false; swipe.mode = ''; swipe.dx = 0;
+    swipe.x = swipe.lx = e.touches[0].clientX; swipe.y = e.touches[0].clientY; swipe.lt = performance.now(); swipe.vx = 0;
   }, { passive: true });
-  sc.addEventListener('touchmove', (e) => { if (e.touches.length > 1) swipe.on = false; }, { passive: true });
-  sc.addEventListener('touchend', async (e) => {
-    if (!swipe.on) return; swipe.on = false;
-    if (swipe.cancel || press.timer) return;
+  sc.addEventListener('touchmove', (e) => {
+    if (e.touches.length > 1) { swipe.on = false; if (swipe.mode === 'h') swipeSpring(); swipe.mode = 'v'; return; }
+    if (!swipe.on) return;
+    const t = e.touches[0], dx = t.clientX - swipe.x, dy = t.clientY - swipe.y;
+    if (!swipe.mode) {
+      if (Math.hypot(dx, dy) < 8) return;
+      swipe.mode = Math.abs(dx) > Math.abs(dy) ? 'h' : 'v'; // eksen 8 px sonra belirlenir
+      if (swipe.mode === 'h') { if (press.timer) pressEnd(); swipe.cards = swipeCards(); swipe.cards.forEach((c) => { c.style.willChange = 'transform'; }); }
+    }
+    if (swipe.mode !== 'h') return;
+    const now = performance.now(), dt = now - swipe.lt;
+    if (dt > 0) { swipe.vx = 0.6 * swipe.vx + 0.4 * ((t.clientX - swipe.lx) / dt); swipe.lx = t.clientX; swipe.lt = now; }
+    swipe.dx = rubber(dx);
+    for (const c of swipe.cards) c.style.transform = `translate3d(${swipe.dx}px,0,0)`;
+  }, { passive: true });
+  sc.addEventListener('touchend', (e) => {
+    const wasH = swipe.mode === 'h'; swipe.on = false;
+    if (!wasH) return;
+    swipe.mode = '';
     const t = e.changedTouches[0], dx = t.clientX - swipe.x, dy = t.clientY - swipe.y;
-    if (Math.abs(dx) < 60 || Math.abs(dx) <= 1.5 * Math.abs(dy)) return;
-    stepDay(dx < 0 ? 1 : -1);
+    const fling = Math.abs(swipe.vx) > 0.4 && Math.abs(dx) > 20 && (performance.now() - swipe.lt) < 120;
+    if (swipe.cancel || press.timer || Math.abs(dx) <= 1.5 * Math.abs(dy) || (Math.abs(dx) < 60 && !fling)) return swipeSpring();
+    swipeCommit(dx < 0 ? 1 : -1);
   }, { passive: true });
-  sc.addEventListener('touchcancel', () => { swipe.on = false; }, { passive: true });
+  sc.addEventListener('touchcancel', () => { swipe.on = false; if (swipe.mode === 'h') swipeSpring(); swipe.mode = ''; }, { passive: true });
 }
+
+// ---------- Basma dalgası (Win7 tarzı): dokunulan noktadan büyüyen daire; yalnızca transform/opacity ----------
+document.addEventListener('pointerdown', (e) => {
+  if (reduceMotion.matches || (e.pointerType === 'mouse' && e.button !== 0)) return;
+  const el = e.target.closest && e.target.closest('.btn,.icon-btn,.chip,.tabs button,.pill,.big');
+  if (!el || el.disabled || el.classList.contains('blocked')) return;
+  const r = el.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
+  const rad = Math.hypot(Math.max(x, r.width - x), Math.max(y, r.height - y));
+  if (getComputedStyle(el).position === 'static') el.style.position = 'relative';
+  el.classList.add('rip-host');
+  const d = document.createElement('span'); d.className = 'ripple'; d.setAttribute('aria-hidden', 'true');
+  d.style.cssText = `left:${x - rad}px;top:${y - rad}px;width:${rad * 2}px;height:${rad * 2}px`;
+  el.appendChild(d);
+  setTimeout(() => d.remove(), 440);
+}, { passive: true });
 
 // ---------- Not (otomatik kayıt) ----------
 let noteTimer, noteDirty = false;
@@ -1111,9 +1200,14 @@ async function refreshBanner() {
   // uyarı Ayarlar'da (#updateNote) görünür.
   const onlyUpdate = lastError === UPDATE_MSG;
   const showErr = !!lastError && !(onlyUpdate && n === 0);
-  bar.classList.toggle('pending', n > 0); bar.classList.toggle('err', showErr);
+  const wasPending = bar.classList.contains('pending');
+  bar.classList.toggle('pending', n > 0); bar.classList.toggle('err', showErr); bar.classList.toggle('syncing', syncing && n > 0);
   $('syncText').innerHTML = n > 0 ? `<b id="pendingCount">${n}</b> öğe gönderilmeyi bekliyor` : `<b id="pendingCount">0</b> öğe bekliyor · hepsi gönderildi`;
-  if (n > 0 || showErr) { if (bar.hidden || bar.classList.contains('leaving')) showAnim(bar, 'in', 200); }
+  if (n > 0 || showErr) { clearTimeout(bar._dn); bar.classList.remove('done'); if (bar.hidden || bar.classList.contains('leaving')) showAnim(bar, 'in', 200); }
+  else if (wasPending && !bar.hidden && !reduceMotion.matches) { // hepsi gitti: ✔ belirir, kutu ~900 ms sonra kapanır
+    bar.classList.add('done'); clearTimeout(bar._dn);
+    bar._dn = setTimeout(() => { bar.classList.remove('done', 'in', 'leaving', 'syncing'); bar.hidden = true; }, 900);
+  } else if (bar.classList.contains('done')) { /* zamanlayıcı kapatır */ }
   else { clearTimeout(bar._lv); bar.classList.remove('leaving', 'in'); bar.hidden = true; } // gizleme anında (test/mantık); giriş animasyonlu
   const un = $('updateNote'); if (un) un.hidden = !(needUpdate || onlyUpdate);
   $('syncNow').disabled = syncing;

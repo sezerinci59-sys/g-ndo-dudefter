@@ -288,6 +288,7 @@ await page.evaluate(() => document.getElementById('syncNow').click()); await set
 check(upCount() - upB3 === 3, '3 çekim yüklendi: ' + (upCount() - upB3));
 check((await page.locator('#photoGrid .photo.sent').count()) >= 3, 'çekilenler listede');
 // ---- v2.0: başlık, tarih, bildirim kutusu, sekmeler, malzeme girişi ----
+await page.waitForSelector('#syncBar', { state: 'hidden', timeout: 3000 }).catch(() => {});
 check((await page.locator('#syncBar').isHidden()), 'bekleyen yok, hata yok: bildirim kutusu gizli');
 const ttl = await page.locator('.apptitle').boundingBox();
 check((await page.textContent('.apptitle')) === 'İmatek Şantiye Defteri' && Math.abs(ttl.x + ttl.width / 2 - 195) < 3, 'başlık ortada: ' + (ttl.x + ttl.width / 2));
@@ -747,6 +748,19 @@ await ctx3.close();
   await swipeTo(200, sy + 120, 215, sy - 100);
   await p6.waitForTimeout(500);
   check((await dateVal()) === t6, '2.8: dikey kaydırma günü değiştirmez');
+  // 2.9.1: parmakla birlikte kayma ve geri yaylanma
+  await p6.evaluate(() => { document.getElementById('scroller').scrollTop = 0; });
+  await p6.waitForTimeout(100);
+  const sb2 = await p6.locator('#summary').boundingBox();
+  const sy2 = sb2.y + sb2.height / 2;
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 200, y: sy2 }] });
+  for (const x of [190, 170, 150, 130]) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: sy2 + 2 }] });
+  const mid = await p6.evaluate(() => new DOMMatrix(getComputedStyle(document.querySelector('main .card')).transform).m41);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 160, y: sy2 + 2 }] });
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await p6.waitForTimeout(450);
+  const after = await p6.evaluate(() => new DOMMatrix(getComputedStyle(document.querySelector('main .card')).transform).m41);
+  check(mid < -40 && Math.abs(after) < 1 && (await dateVal()) === t6, '2.9.1: içerik parmakla kayar (' + Math.round(mid) + ' px), eşik altında geri yaylanır');
   await p6.fill('#dateInput', '2020-01-01');
   await p6.waitForFunction(() => document.getElementById('dateInput').value === '2020-01-01');
   await p6.waitForTimeout(300);

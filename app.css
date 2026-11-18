@@ -332,3 +332,34 @@ body{height:100vh;min-height:-webkit-fill-available}
 #scroller{order:2;padding-bottom:16px}
 .tabs{order:3;position:relative!important;left:auto;right:auto;bottom:auto;flex:0 0 auto}
 main{overflow-x:clip}
+
+/* ===== 2.9.1: ek animasyonlar (yalnızca transform/opacity) ===== */
+#scroller{touch-action:pan-y}
+/* Basma dalgası */
+.rip-host{overflow:hidden}
+.ripple{position:absolute;border-radius:50%;background:currentColor;opacity:0;transform:scale(0);pointer-events:none;animation:ripple 420ms cubic-bezier(.2,.6,.3,1) forwards;will-change:transform,opacity}
+@keyframes ripple{from{transform:scale(0);opacity:.35}to{transform:scale(1);opacity:0}}
+/* Sayı kayması */
+.num{display:inline-block;position:relative}
+.num.roll{animation:numIn 220ms var(--ease-in)}
+.num.roll::before{content:attr(data-old);position:absolute;left:0;top:0;animation:numOut 220ms var(--ease-in) forwards}
+@keyframes numIn{from{opacity:0;transform:translateY(60%)}to{opacity:1;transform:none}}
+@keyframes numOut{from{opacity:1;transform:none}to{opacity:0;transform:translateY(-60%)}}
+/* Açılışta kartlar sırayla */
+main.boot .card{animation:cardIn 360ms var(--ease-nav) both;will-change:transform,opacity}
+main.boot .card:nth-of-type(2){animation-delay:70ms}
+main.boot .card:nth-of-type(3){animation-delay:140ms}
+main.boot .card:nth-of-type(4){animation-delay:210ms}
+main.boot .card:nth-of-type(n+5){animation-delay:280ms}
+@keyframes cardIn{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+/* Gönderim çubuğu: parıltı ve ✔ */
+.syncbar{position:relative;overflow:hidden}
+.syncbar.syncing::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(100deg,transparent 30%,rgba(255,255,255,.7) 50%,transparent 70%);transform:translateX(-100%);animation:shimmer 1.2s linear infinite;will-change:transform}
+@keyframes shimmer{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+.sync-ok{display:none;color:#2f8a2f;font-weight:700}
+.syncbar.done .sync-ok{display:inline-block;animation:okPop 360ms var(--ease-in) both}
+@keyframes okPop{0%{transform:scale(.4);opacity:0}60%{transform:scale(1.15);opacity:1}100%{transform:scale(1);opacity:1}}
+/* Bekleyen fotoğraf etiketi */
+.photo.pending > span:not(.irs){animation:tagPulse 1.6s ease-in-out infinite;will-change:opacity}
+@keyframes tagPulse{0%,100%{opacity:1}50%{opacity:.55}}
+.photo.flip > span:not(.irs){animation:fadeIn 300ms var(--ease-in)}
