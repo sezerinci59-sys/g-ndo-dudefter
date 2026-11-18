@@ -703,6 +703,11 @@ function renderTeamSettings() {
     }
     det.open = !ui.closed.has(t.id) || !!ui.q; det.dataset.tid = t.id;
     w.appendChild(det);
+    { // Durum satırı: ekip nerede görünüyor
+      const g = !t.hidden && !isSiteHidden(t, 'gundogdu'), k = !t.hidden && !isSiteHidden(t, 'koseilyas');
+      const txt = t.hidden ? 'Durum: İki şantiyede de GİZLİ' : `Durum: Gündoğdu ${g ? '✔ görünür' : '✖ gizli'} · Köseilyas ${k ? '✔ görünür' : '✖ gizli'}`;
+      w.appendChild(el('div', { className: 'tstatus' + (t.hidden ? ' off' : ''), text: txt }));
+    }
     if (t.hidden) w.appendChild(btn('Geri getir', { 'data-unhide': t.id }, 'btn small'));
     else if (ui.hideTeam === t.id) w.appendChild(el('div', { className: 'tset-row' }, btn('Evet, İKİ şantiyede de gizle', { 'data-hideyes': t.id }, 'btn small danger'), btn('Vazgeç', { 'data-hideno': '1' })));
     else w.appendChild(btn('İki şantiyede de gizle (işi bitti)', { 'data-hide': t.id }));
@@ -747,7 +752,7 @@ $('teamSettings').addEventListener('click', async (e) => {
   else if (d.hide) { ui.hideTeam = d.hide; }
   else if (d.hideno) { ui.hideTeam = null; }
   else if (d.hideyes) { const x = state.teams.find((q) => q.id === d.hideyes); if (x) x.hidden = true; ui.hideTeam = null; changed = true; }
-  else if (d.unhide) { const x = state.teams.find((q) => q.id === d.unhide); if (x) x.hidden = false; changed = true; }
+  else if (d.unhide) { const x = state.teams.find((q) => q.id === d.unhide); if (x) { x.hidden = false; toast(`${x.name} geri getirildi; ana ekranda görünür.`); } changed = true; }
   else if (d.trename) {
     const v = $('teamSettings').querySelector(`input[data-tname="${d.trename}"]`).value.trim().replace(/\s+/g, ' ');
     const x = state.teams.find((q) => q.id === d.trename);
