@@ -1645,7 +1645,16 @@ $('logCopy')?.addEventListener('click', async () => {
   catch { box.focus(); box.select(); toast('Seçildi; Kopyala deyin.'); }
 });
 $('logClear')?.addEventListener('click', () => { try { localStorage.removeItem('sd_log'); } catch { /* yoksay */ } renderLog(); toast('Kayıt temizlendi.'); });
+function setConnLock(locked) {
+  const box = $('connBox'), btn = $('lockBtn'), st = $('lockState'); if (!box) return;
+  box.disabled = locked;
+  btn.textContent = locked ? '🔓 Kilidi aç' : '🔒 Kilitle';
+  st.textContent = locked ? '🔒 Kilitli — yanlışlıkla değişmesin diye' : '🔓 Açık — değişiklik yapabilirsiniz';
+  box.classList.toggle('unlocked', !locked);
+}
+$('lockBtn')?.addEventListener('click', () => setConnLock(!$('connBox').disabled));
 function openSettings() {
+  setConnLock(true);
   if (state.site) $('xlSite').value = state.site;
   if (!$('xlMonth').value) $('xlMonth').value = today().slice(0, 7);
   renderLog();

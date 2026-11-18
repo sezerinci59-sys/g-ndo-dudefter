@@ -1,5 +1,6 @@
 // Sürüm notları — her güncellemede en üste yeni satır eklenir.
 export const SURUMLER = [
+  { v: '2.9.6', t: '18.11.2026', n: ['Ayarlar: Apps Script adresi ve anahtar en alta taşındı ve kilitli; değiştirmek için "Kilidi aç". Ayarlar her açıldığında yeniden kilitlenir.'] },
   { v: '2.9.5', t: '18.11.2026', n: ['Düzeltme: kamera önizlemesi küçük kutuda kalıyordu; artık ekranı doldurur. Kayıt defterine kamera çözünürlüğü yazılır.'] },
   { v: '2.9.4', t: '18.11.2026', n: ['Ayarlar > Ekipler: bir ekibi sadece bu şantiyede gizleme ("Bu şantiyede gösterme"). Diğer şantiyede görünmeye devam eder. Ayar telefonda saklanır.'] },
   { v: '2.9.3', t: '18.11.2026', n: ['Kamera 0.5x (ultra geniş açı) ile açılır. Malzeme girişinde 0.5x kamerada flaş yoksa flaş için 1x kullanılır.'] },

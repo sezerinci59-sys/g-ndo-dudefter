@@ -110,18 +110,6 @@
   <div class="sheet scroll">
     <div class="winbar"><h1>Ayarlar</h1><button type="button" id="closeSettings" class="xclose" aria-label="Kapat">✕</button></div>
     <div class="winbody">
-    <label class="field">Apps Script adresi
-      <input type="url" id="setUrl" placeholder="https://script.google.com/macros/s/…/exec" autocapitalize="off" autocorrect="off" spellcheck="false">
-    </label>
-    <label class="field">Gizli anahtar
-      <input type="text" id="setKey" placeholder="kurulum() ile oluşan anahtar" autocapitalize="off" autocorrect="off" spellcheck="false">
-    </label>
-    <div class="row two">
-      <button type="button" id="saveSettings" class="btn">Kaydet</button>
-      <button type="button" id="testConn" class="btn ghost">Bağlantıyı test et</button>
-    </div>
-    <div id="updateNote" class="hint" hidden style="color:#8a1c1c;font-weight:700">Apps Script eski sürümde: ekip listesi Drive'dan gelmiyor. Dağıt → Dağıtımları yönet → kalem → Sürüm: "Yeni sürüm" → Dağıt.</div>
-    <div id="testResult" class="hint"></div>
     <h2>Ekipler</h2>
     <p class="hint">Seçili şantiyenin ekipleri. Gizlenen ekibin kayıtları silinmez.</p>
     <div id="tfBar"><div id="tfPills" class="pills"></div><input type="search" id="tfSearch" placeholder="İsim ara" aria-label="İsim ara" autocomplete="off"></div>
@@ -146,6 +134,22 @@
     <button type="button" class="btn ghost block" id="forceUpdate">Güncellemeyi şimdi al</button>
     <p class="hint">Yazdıkların ve bekleyen fotoğraflar silinmez; sadece uygulama dosyaları yeniden indirilir.</p>
     <div id="surumNotlari"></div>
+    <h2>Bağlantı (Apps Script)</h2>
+    <div class="lockrow"><span id="lockState" class="hint">🔒 Kilitli — yanlışlıkla değişmesin diye</span><button type="button" id="lockBtn" class="btn">🔓 Kilidi aç</button></div>
+    <fieldset id="connBox" class="connbox" disabled>
+    <label class="field">Apps Script adresi
+      <input type="url" id="setUrl" placeholder="https://script.google.com/macros/s/…/exec" autocapitalize="off" autocorrect="off" spellcheck="false">
+    </label>
+    <label class="field">Gizli anahtar
+      <input type="text" id="setKey" placeholder="kurulum() ile oluşan anahtar" autocapitalize="off" autocorrect="off" spellcheck="false">
+    </label>
+    <div class="row two">
+      <button type="button" id="saveSettings" class="btn">Kaydet</button>
+    </div>
+    <div id="updateNote" class="hint" hidden style="color:#8a1c1c;font-weight:700">Apps Script eski sürümde: ekip listesi Drive'dan gelmiyor. Dağıt → Dağıtımları yönet → kalem → Sürüm: "Yeni sürüm" → Dağıt.</div>
+    <div id="testResult" class="hint"></div>
+    </fieldset>
+    <div class="row"><button type="button" id="testConn" class="btn ghost" style="flex:1">Bağlantıyı test et</button></div>
     </div>
   </div>
 </div>
