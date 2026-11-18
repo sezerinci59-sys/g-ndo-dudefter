@@ -1,5 +1,6 @@
 // Sürüm notları — her güncellemede en üste yeni satır eklenir.
 export const SURUMLER = [
+  { v: '2.9.3', t: '18.11.2026', n: ['Kamera 0.5x (ultra geniş açı) ile açılır. Malzeme girişinde 0.5x kamerada flaş yoksa flaş için 1x kullanılır.'] },
   { v: '2.9.2', t: '18.11.2026', n: ['Her ekibin başlığında ▼ düğmesi: puantaj bitince ekip listesini kapat, yanlışlıkla dokunmayı önle. Kapalıyken isimler ve "Hepsi geldi" kullanılamaz.', 'Kapatma durumu gün ve şantiye bazında hatırlanır; ertesi gün her ekip yine açık başlar.'] },
   { v: '2.9.1', t: '18.11.2026', n: ['Gün değiştirirken içerik parmağınla birlikte kayar; yeterince çekersen yeni güne geçer, yoksa yaylanarak geri döner.', 'Düğmelere ve isimlere dokununca dokunulan noktadan yayılan dalga efekti.', 'Sayılar değişirken kayarak yenilenir (bugün X/Y ve toplam kişi).', 'Uygulama açılırken kartlar sırayla belirir.', 'Gönderim sırasında çubukta parıltı; hepsi gidince ✔ belirir ve çubuk kapanır.', '\"Bekliyor\" etiketi gönderilene kadar hafifçe yanıp söner, gönderilince \"Gönderildi\"ye geçer.'] },
   { v: '2.9', t: '18.11.2026', n: ['Günler önceden indirilir: bulunduğun günün 3 gün öncesi ve sonrası iki şantiye için hazır; günler arası geçiş beklemesiz.', 'Daha önce açılan gün anında görünür, arka planda güncellenir; ekran yanıp sönmez.', 'Animasyonlar daha belirgin ve yumuşak.'] },

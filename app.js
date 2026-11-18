@@ -1145,6 +1145,43 @@ function camNative(why, kind) {
   if (why) toast(why, 5000);
   $('camInput').click();
 }
+const isUltraLabel = (l) => /ultra|geniş açı|ultra geniş|0[.,]5/i.test(l || '') && !/front|ön|selfie|user/i.test(l || '');
+async function torchWorks(track) {
+  try {
+    if (!track.getCapabilities || !track.getCapabilities().torch) return false;
+    await track.applyConstraints({ advanced: [{ torch: true }] });
+    const ok = !!(track.getSettings && track.getSettings().torch);
+    await track.applyConstraints({ advanced: [{ torch: false }] }).catch(() => {});
+    return ok;
+  } catch { return false; }
+}
+async function preferUltraWide(stream, needTorch) {
+  try {
+    const tr = stream.getVideoTracks()[0];
+    if (!tr) return stream;
+    if (isUltraLabel(tr.label)) { logEv('Kamera: 0.5x (' + tr.label + ')'); return stream; }
+    // 1) Sanal çoklu kamerada zoom < 1 destekleniyorsa onu kullan
+    const caps = tr.getCapabilities ? tr.getCapabilities() : {};
+    if (caps.zoom && caps.zoom.min < 1) {
+      await tr.applyConstraints({ advanced: [{ zoom: Math.max(caps.zoom.min, 0.5) }] });
+      logEv('Kamera: zoom ' + Math.max(caps.zoom.min, 0.5)); return stream;
+    }
+    // 2) Ayrı ultra geniş kamera
+    const devs = (await navigator.mediaDevices.enumerateDevices()).filter((d) => d.kind === 'videoinput');
+    const uw = devs.find((d) => isUltraLabel(d.label));
+    if (!uw) { logEv('Kamera: 0.5x bulunamadı (' + devs.map((d) => d.label).join(' | ') + ')'); return stream; }
+    const s2 = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: uw.deviceId }, width: { ideal: 3840 }, height: { ideal: 2160 } }, audio: false });
+    const t2 = s2.getVideoTracks()[0];
+    if (needTorch && !(await torchWorks(t2)) && (await torchWorks(tr))) {
+      s2.getTracks().forEach((t) => t.stop());
+      logEv('Kamera: 0.5x flaşsız; malzeme için 1x + flaş'); toast('0.5x kamerada flaş yok; malzeme girişi 1x çekiliyor.', 3500);
+      return stream;
+    }
+    stream.getTracks().forEach((t) => t.stop());
+    logEv('Kamera: 0.5x (' + uw.label + ')');
+    return s2;
+  } catch (e) { logEv('Kamera: 0.5x seçilemedi: ' + (e && e.message)); return stream; }
+}
 async function openCamera(kind) {
   if (kind !== 'irsaliye') kind = undefined;
   if (!state.site) return;
@@ -1158,6 +1195,8 @@ async function openCamera(kind) {
     const denied = err && (err.name === 'NotAllowedError' || err.name === 'SecurityError');
     return camNative(denied ? 'Kamera izni verilmedi; sistem kamerası açılıyor. (Her fotoğrafta "Kullan" onayı çıkar.)' : 'Kamera açılamadı; sistem kamerası açılıyor.', kind);
   }
+  // 0.5x (ultra geniş açı) tercih edilir. iPhone'da ayrı bir kamera olarak görünür; izin alındıktan sonra adı okunabilir.
+  stream = await preferUltraWide(stream, !!kind);
   cam.kind = kind;
   $('camMode').hidden = !kind; $('camWarn').hidden = true;
   if (kind) {
