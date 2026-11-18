@@ -704,8 +704,8 @@ function renderTeamSettings() {
     det.open = !ui.closed.has(t.id) || !!ui.q; det.dataset.tid = t.id;
     w.appendChild(det);
     if (t.hidden) w.appendChild(btn('Geri getir', { 'data-unhide': t.id }, 'btn small'));
-    else if (ui.hideTeam === t.id) w.appendChild(el('div', { className: 'tset-row' }, btn('Evet, gizle', { 'data-hideyes': t.id }, 'btn small danger'), btn('Vazgeç', { 'data-hideno': '1' })));
-    else w.appendChild(btn('Ekibi gizle (işi bitti)', { 'data-hide': t.id }));
+    else if (ui.hideTeam === t.id) w.appendChild(el('div', { className: 'tset-row' }, btn('Evet, İKİ şantiyede de gizle', { 'data-hideyes': t.id }, 'btn small danger'), btn('Vazgeç', { 'data-hideno': '1' })));
+    else w.appendChild(btn('İki şantiyede de gizle (işi bitti)', { 'data-hide': t.id }));
     if (!t.hidden) {
       const sn = SITES[state.site];
       if (isSiteHidden(t)) w.appendChild(el('div', { className: 'tset-row' }, el('span', { className: 'hint', text: `${sn}'da gizli` }), btn(`${sn}'da göster`, { 'data-sshow': t.id }, 'btn small')));

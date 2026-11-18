@@ -1,5 +1,6 @@
 // Sürüm notları — her güncellemede en üste yeni satır eklenir.
 export const SURUMLER = [
+  { v: '2.9.7', t: '18.11.2026', n: ['Ayarlar > Ekipler: düğme adları netleştirildi — "Bu şantiyede gösterme" sadece seçili şantiyede, "İki şantiyede de gizle (işi bitti)" her iki şantiyede gizler.'] },
   { v: '2.9.6', t: '18.11.2026', n: ['Ayarlar: Apps Script adresi ve anahtar en alta taşındı ve kilitli; değiştirmek için "Kilidi aç". Ayarlar her açıldığında yeniden kilitlenir.'] },
   { v: '2.9.5', t: '18.11.2026', n: ['Düzeltme: kamera önizlemesi küçük kutuda kalıyordu; artık ekranı doldurur. Kayıt defterine kamera çözünürlüğü yazılır.'] },
   { v: '2.9.4', t: '18.11.2026', n: ['Ayarlar > Ekipler: bir ekibi sadece bu şantiyede gizleme ("Bu şantiyede gösterme"). Diğer şantiyede görünmeye devam eder. Ayar telefonda saklanır.'] },
