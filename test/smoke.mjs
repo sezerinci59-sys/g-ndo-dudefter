@@ -858,6 +858,43 @@ await ctx3.close();
   await ctx9.close();
 }
 
+// ---- 2.9.2: ekip listesini kapatma ----
+{
+  const ctx7 = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const p7 = await ctx7.newPage();
+  const errs7 = [];
+  p7.on('pageerror', (e) => errs7.push('pageerror: ' + e.message));
+  await p7.addInitScript(() => { if (!localStorage.getItem('sd_site')) localStorage.setItem('sd_site', JSON.stringify('gundogdu')); });
+  await p7.goto(base + 'index.html');
+  await p7.waitForSelector('#chips', { state: 'attached' });
+  await p7.fill('#newTeam', 'Beton'); await p7.click('#addTeam');
+  const sec7 = p7.locator('#chips section.team', { has: p7.locator('h3', { hasText: /^Beton$/ }) });
+  for (const n of ['Ali', 'Veli']) { await sec7.locator('form.teamadd input').fill(n); await sec7.locator('form.teamadd button').click(); }
+  const tgl = sec7.locator('.tgl');
+  check((await tgl.getAttribute('aria-expanded')) === 'true' && (await tgl.getAttribute('aria-label')) === 'Listeyi kapat' && (await tgl.boundingBox()).width >= 44, '2.9.2: ekip başlığında ▼ düğmesi, varsayılan açık');
+  await tgl.click();
+  await p7.waitForTimeout(450);
+  check((await tgl.getAttribute('aria-expanded')) === 'false' && (await tgl.getAttribute('aria-label')) === 'Listeyi aç', '2.9.2: kapatınca aria-expanded=false');
+  check(await sec7.locator('.tbody-in').evaluate((e) => e.hasAttribute('inert') && e.getBoundingClientRect().height < 2), '2.9.2: liste inert ve yüksekliği 0');
+  check(await sec7.locator('[data-all]').isDisabled(), '2.9.2: kapalıyken Hepsi geldi devre dışı');
+  const sum7 = await p7.textContent('#summary');
+  await sec7.locator('.chip[data-name="Ali"]').click({ force: true, timeout: 1000 }).catch(() => {});
+  check((await p7.textContent('#summary')) === sum7 && (await p7.locator('#chips .chip.full').count()) === 0, '2.9.2: kapalıyken isme dokunulamaz');
+  await p7.reload(); await p7.waitForSelector('#chips .chip[data-name="Ali"]', { state: 'attached' });
+  check((await sec7.locator('.tgl').getAttribute('aria-expanded')) === 'false', '2.9.2: yenilemede aynı gün+şantiye kapalı kalır');
+  await p7.locator('#siteTabs button[data-site="koseilyas"]').click(); await p7.waitForTimeout(400);
+  check((await sec7.locator('.tgl').getAttribute('aria-expanded')) === 'true', '2.9.2: diğer şantiye açık başlar');
+  await p7.locator('#siteTabs button[data-site="gundogdu"]').click(); await p7.waitForTimeout(400);
+  check((await sec7.locator('.tgl').getAttribute('aria-expanded')) === 'false', '2.9.2: şantiyeye dönünce kapalı');
+  await p7.click('#nextDay'); await p7.waitForTimeout(600);
+  check((await sec7.locator('.tgl').getAttribute('aria-expanded')) === 'true' && !(await sec7.locator('[data-all]').isDisabled()), '2.9.2: ertesi gün açık başlar');
+  await p7.click('#prevDay'); await p7.waitForTimeout(600);
+  await sec7.locator('.tgl').click(); await p7.waitForTimeout(450);
+  check((await sec7.locator('.tgl').getAttribute('aria-expanded')) === 'true' && await sec7.locator('.chip[data-name="Ali"]').isEnabled(), '2.9.2: tekrar açılır');
+  check(errs7.length === 0, '2.9.2: sayfa hatası yok ' + errs7.join('|'));
+  await ctx7.close();
+}
+
 // Ayar yoksa Türkçe uyarı
 await page.unroute(GAS);
 await page.evaluate(() => localStorage.setItem('sd_settings', '{}'));

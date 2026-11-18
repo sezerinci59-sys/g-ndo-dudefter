@@ -259,6 +259,31 @@ function popChip(b, i = 0) {
   b.style.animationDelay = d ? d + 'ms' : '';
   playClass(b, 'pop', 280 + d);
 }
+// Ekip listesini kapatma: gün + şantiye + ekip başına (localStorage), 14 günden eski kayıtlar silinir. Yeni gün hep açık başlar.
+const COLL_KEY = 'sd_collapsed';
+const collKey = (id) => `${state.date}|${state.site}|${id}`;
+function readColl() {
+  const m = ls.get(COLL_KEY, {}) || {};
+  const lim = shiftDate(today(), -14); let dirty = false;
+  for (const k of Object.keys(m)) if (k.slice(0, 10) < lim) { delete m[k]; dirty = true; }
+  if (dirty) ls.set(COLL_KEY, m);
+  return m;
+}
+const isCollapsed = (id) => !!readColl()[collKey(id)];
+function applyCollapsed(sec, on) {
+  sec.classList.toggle('collapsed', on);
+  const b = sec.querySelector('.tgl'), all = sec.querySelector('[data-all]'), inn = sec.querySelector('.tbody-in');
+  if (b) { b.setAttribute('aria-expanded', String(!on)); b.setAttribute('aria-label', on ? 'Listeyi aç' : 'Listeyi kapat'); }
+  if (all) all.disabled = on;
+  if (inn) { if (on) inn.setAttribute('inert', ''); else inn.removeAttribute('inert'); }
+}
+function toggleTeam(sec) {
+  const on = !sec.classList.contains('collapsed'), m = readColl(), k = collKey(sec.dataset.team);
+  if (on) m[k] = Date.now(); else delete m[k];
+  ls.set(COLL_KEY, m);
+  if (on && sec.contains(document.activeElement)) document.activeElement.blur();
+  applyCollapsed(sec, on);
+}
 // Sayı kayması: segs = [metin, sayı, metin, sayı, ...]; değişen sayı eski değeri yukarı çıkarır, yenisi alttan gelir.
 // Eski değer ::before ile çizilir (data-old), böylece textContent hep tek ve doğru kalır.
 function setRoll(el, segs, animate) {
@@ -345,16 +370,22 @@ function renderChips() {
     setRoll(cnt, [label.toLowerCase() + ' ', present, '/', mem.length], false);
     const all = document.createElement('button'); all.type = 'button'; all.className = 'btn small ghost';
     all.dataset.all = t.id; all.textContent = 'Hepsi geldi';
-    head.append(h, cnt, all); sec.appendChild(head);
+    const tg = document.createElement('button'); tg.type = 'button'; tg.className = 'btn small ghost tgl'; tg.dataset.tgl = t.id;
+    tg.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    const act = document.createElement('div'); act.className = 'team-act'; act.append(tg, all);
+    head.append(h, cnt, act); sec.appendChild(head);
+    const tbody = document.createElement('div'); tbody.className = 'tbody';
+    const inn = document.createElement('div'); inn.className = 'tbody-in'; tbody.appendChild(inn); sec.appendChild(tbody);
     const chips = document.createElement('div'); chips.className = 'chips';
     for (const m of mem) chips.appendChild(chipBtn(m.name, att[m.name]));
-    sec.appendChild(chips);
+    inn.appendChild(chips);
     const f = document.createElement('form'); f.className = 'addform teamadd'; f.dataset.team = t.id; f.autocomplete = 'off';
     const i = document.createElement('input'); i.type = 'text'; i.placeholder = 'Yeni isim'; i.autocapitalize = 'words';
     i.setAttribute('aria-label', t.name + ' ekibine isim ekle');
     const ab = document.createElement('button'); ab.type = 'submit'; ab.className = 'btn small plus'; ab.textContent = '+';
     ab.setAttribute('aria-label', t.name + ' ekibine ekle');
-    f.append(i, ab); sec.appendChild(f);
+    f.append(i, ab); inn.appendChild(f);
+    applyCollapsed(sec, isCollapsed(t.id));
     box.appendChild(sec);
   }
   // Gizli ekiplerde / listede olmayıp o gün kaydı olanlar görünür kalır
@@ -562,6 +593,8 @@ $('chips').addEventListener('click', async (e) => {
       if (att[n] < 1) toast('Diğer şantiyede yarım gün var; yarım gün işaretlendi.');
     } else delete att[n];
     if (!patchChips([n])) renderChips(); await persistDay(state.day, { att: true });
+  } else if (t.dataset.tgl) {
+    toggleTeam(t.closest('section.team'));
   } else if (t.dataset.all) {
     const mem = state.members.filter((m) => m.teamId === t.dataset.all);
     const todo = mem.map((m) => [m.name, limitedTarget(m.name, 1)]).filter(([n, tg]) => tg > 0 && (att[n] || 0) < tg);

@@ -109,7 +109,7 @@ textarea{resize:vertical;min-height:110px}
 .chip.half{background:linear-gradient(180deg,rgba(255,255,255,.55) 0,rgba(255,255,255,.12) 49%,rgba(0,0,0,0) 50%),linear-gradient(#fbcb55,#eba61a 55%,#d99207);border-color:#a8760c;color:#1f1300;box-shadow:inset 0 0 0 1px rgba(255,255,255,.4),0 1px 3px rgba(0,0,0,.25)}
 .team{--tc:#245edb;background:#fff;border:1px solid var(--tc);border-radius:6px;padding:0 0 8px;margin-top:10px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.18)}
 .team:first-child{margin-top:0}
-.team>.chips,.team>.teamadd{margin-left:8px;margin-right:8px}
+.team .tbody-in>.chips,.team .tbody-in>.teamadd{margin-left:8px;margin-right:8px}
 .team-head{display:grid;grid-template-columns:1fr auto;align-items:center;gap:4px 8px;margin:0 0 8px;padding:8px 8px 8px;color:#fff;
   background:linear-gradient(180deg,rgba(255,255,255,.5) 0,rgba(255,255,255,.14) 50%,rgba(255,255,255,0) 51%),var(--tc);
   border-bottom:1px solid rgba(0,0,0,.25);box-shadow:inset 0 1px 0 rgba(255,255,255,.5)}
@@ -363,3 +363,18 @@ main.boot .card:nth-of-type(n+5){animation-delay:280ms}
 .photo.pending > span:not(.irs){animation:tagPulse 1.6s ease-in-out infinite;will-change:opacity}
 @keyframes tagPulse{0%,100%{opacity:1}50%{opacity:.55}}
 .photo.flip > span:not(.irs){animation:fadeIn 300ms var(--ease-in)}
+
+/* ===== 2.9.2: ekip listesini kapatma ===== */
+.team-act{display:flex;align-items:center;gap:8px;justify-self:end}
+.team-head .btn.tgl{width:44px;min-width:44px;padding:0;display:inline-flex;align-items:center;justify-content:center}
+.tgl svg{transition:transform 300ms var(--ease-nav);will-change:transform}
+.team.collapsed .tgl svg{transform:rotate(180deg)}
+.tbody{display:grid;grid-template-rows:1fr;transition:grid-template-rows 320ms var(--ease-nav)}
+.team.collapsed .tbody{grid-template-rows:0fr}
+.tbody-in{min-height:0;overflow:hidden;transition:opacity 320ms var(--ease-nav),transform 320ms var(--ease-nav)}
+.team.collapsed .tbody-in{opacity:0;transform:translateY(-8px)}
+.team-head [data-all]:disabled{opacity:.45}
+.tbody-in>.chips{padding-top:4px}
+.team{transition:padding-bottom 320ms var(--ease-nav)}
+.team.collapsed{padding-bottom:0}
+.team.collapsed .tbody{margin:0}
