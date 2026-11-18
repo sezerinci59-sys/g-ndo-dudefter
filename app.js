@@ -88,7 +88,7 @@ function shortDate(s) {
 const fmtNum = (n) => String(n).replace('.', ',');
 
 // ---------- Durum ----------
-const state = { otherAtt: {}, site: null, date: today(), day: null, teams: [], members: [], pulled: false, rosterLoaded: false };
+const state = { loading: false, otherAtt: {}, site: null, date: today(), day: null, teams: [], members: [], pulled: false, rosterLoaded: false };
 const ui = { hideTeam: null, delName: null, archName: null, editName: null, filterTeam: null, q: '', closed: new Set() };
 let photoUrls = [];
 
@@ -116,8 +116,8 @@ function hideAnim(el, ms) {
 }
 function toast(msg, ms = 2800) {
   const t = $('toast'); t.textContent = msg;
-  if (t.hidden || t.classList.contains('leaving')) showAnim(t, 'in', 200);
-  clearTimeout(toast._t); toast._t = setTimeout(() => hideAnim(t, 160), ms);
+  if (t.hidden || t.classList.contains('leaving')) showAnim(t, 'in', 300);
+  clearTimeout(toast._t); toast._t = setTimeout(() => hideAnim(t, 220), ms);
 }
 
 // ---------- Gün verisi ----------
@@ -135,28 +135,11 @@ async function loadOther() {
   const rec = o ? await dbGet('days', dayKey(o, state.date)) : null;
   state.otherAtt = (rec && rec.attendance) || {};
 }
-async function pullOther() {
-  const site = state.site, date = state.date, o = otherSite();
-  if (!site || !o || !canPull()) return;
-  let data;
-  try { data = await post({ action: 'getDay', site: o, date }); } catch { return; }
-  if (!data) return;
-  const att = {};
-  for (const [n, v] of Object.entries(data.attendance || {})) if (Number(v) > 0) att[n] = Number(v);
-  const k = dayKey(o, date);
-  const rec = await dbGet('days', k);
-  // Diğer şantiyenin kaydı yerelde değiştirilmişse (kirli) ona dokunulmaz; kirlilik bayrakları hiç değişmez.
-  if (rec && isAttDirty(rec)) return;
-  if (JSON.stringify(att) !== JSON.stringify((rec && rec.attendance) || {})) {
-    await dbPut('days', rec ? { ...rec, attendance: att } : { key: k, site: o, date, attendance: att, note: '', updatedAt: 0, synced: true });
-  }
-  if (state.site !== site || state.date !== date || !state.day) return;
-  if (JSON.stringify(att) !== JSON.stringify(state.otherAtt || {})) { state.otherAtt = att; renderChips(); }
-}
 async function loadDay() {
   await loadOther();
   const rec = await dbGet('days', dayKey(state.site, state.date));
   state.day = rec || { key: dayKey(state.site, state.date), site: state.site, date: state.date, attendance: {}, note: '', updatedAt: 0, synced: true };
+  state.loading = !rec && canPull();
   await loadNames();
 }
 const newId = () => 't' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
@@ -272,8 +255,9 @@ function setChipState(b, v) {
 }
 function popChip(b, i = 0) {
   if (reduceMotion.matches) return;
-  b.style.animationDelay = i ? Math.min(i * 20, 300) + 'ms' : '';
-  playClass(b, 'pop', 180 + (i ? Math.min(i * 20, 300) : 0));
+  const d = i ? Math.min(i * 35, 600 - 280) : 0; // toplam en çok ~600 ms
+  b.style.animationDelay = d ? d + 'ms' : '';
+  playClass(b, 'pop', 280 + d);
 }
 // Sadece metinleri günceller (yeniden kurma yok)
 function updateCounts() {
@@ -286,7 +270,7 @@ function updateCounts() {
   }
   const vals = Object.values(att).filter((v) => v > 0);
   const sum = vals.reduce((a, b) => a + b, 0);
-  const l2 = state.date === today() ? 'Bugün' : 'Bu gün', st = `${l2}: ${vals.length} kişi (${fmtNum(sum)} gün)`;
+  const l2 = state.date === today() ? 'Bugün' : 'Bu gün', st = state.loading ? 'Yükleniyor…' : `${l2}: ${vals.length} kişi (${fmtNum(sum)} gün)`;
   if ($('summary').textContent !== st) $('summary').textContent = st;
 }
 // Tek tek chip günceller. Düzenin değişeceği durumda (gizli/listede olmayan grup) false döner: tam yeniden çizim gerekir.
@@ -365,7 +349,7 @@ function renderChips() {
   }
   const vals = Object.values(att).filter((v) => v > 0);
   const sum = vals.reduce((a, b) => a + b, 0);
-  $('summary').textContent = `${label}: ${vals.length} kişi (${fmtNum(sum)} gün)`;
+  $('summary').textContent = state.loading ? 'Yükleniyor…' : `${label}: ${vals.length} kişi (${fmtNum(sum)} gün)`;
 }
 function renderNote() {
   const ta = $('note');
@@ -382,7 +366,7 @@ async function renderPhotos() {
   for (const p of list) {
     const isNew = !fresh && !photoSeen.has(p.id) && !reduceMotion.matches; photoSeen.add(p.id);
     const div = document.createElement('div'); div.className = 'photo ' + (p.status === 'sent' ? 'sent' : 'pending') + (isNew ? ' pin' : '');
-    if (isNew) setTimeout(() => div.classList.remove('pin'), 240);
+    if (isNew) setTimeout(() => div.classList.remove('pin'), 360);
     const img = document.createElement('img');
     const noThumb = () => { div.classList.add('nothumb'); img.remove(); };
     if (p.thumbData) img.src = p.thumbData;
@@ -439,22 +423,39 @@ async function flushNote() {
   await persistDay(state.day, { note: true });
   $('noteState').textContent = 'Kaydedildi';
 }
+const NAV_MS = 340;
 async function selectSite(site) {
   await flushNote();
   state.site = site; ls.set('sd_site', site);
   await renderAll();
   $('picker').hidden = true;
-  playClass(document.querySelector('main'), 'pg-up', 200);
+  playClass(document.querySelector('main'), 'pg-up', 320);
   pullDay(); pullRoster();
 }
+// Gün geçişi: animasyon sürerken gelen istekler üst üste binmez; yalnızca en son hedef tarih sıraya alınır.
+let navBusy = false, navTarget = null;
+const navBase = () => (navBusy && navTarget) || state.date;
+const stepDay = (delta) => setDate(shiftDate(navBase(), delta));
 async function setDate(date) {
   if (!date) return;
-  await flushNote();
-  const dir = date > state.date ? 'pg-next' : 'pg-prev';
-  state.date = date;
-  await renderAll();
-  playClass(document.querySelector('main'), dir, 200);
-  pullDay();
+  if (navBusy) { navTarget = date; if (date !== state.date) $('dateText').textContent = (date === today() ? 'Bugün · ' : '') + shortDate(date); return; }
+  navBusy = true;
+  try {
+    let d = date;
+    while (d) {
+      navTarget = null;
+      if (d !== state.date) {
+        await flushNote();
+        const dir = d > state.date ? 'pg-next' : 'pg-prev';
+        state.date = d;
+        await renderAll();
+        playClass(document.querySelector('main'), dir, NAV_MS);
+        pullDay();
+        if (!reduceMotion.matches) await wait(NAV_MS);
+      } else renderDate();
+      d = navTarget && navTarget !== state.date ? navTarget : null;
+    }
+  } finally { navBusy = false; navTarget = null; }
 }
 
 // ---------- Konum ----------
@@ -917,11 +918,10 @@ const swipe = { x: 0, y: 0, on: false, cancel: false, busy: false };
   sc.addEventListener('touchmove', (e) => { if (e.touches.length > 1) swipe.on = false; }, { passive: true });
   sc.addEventListener('touchend', async (e) => {
     if (!swipe.on) return; swipe.on = false;
-    if (swipe.cancel || press.timer || swipe.busy) return;
+    if (swipe.cancel || press.timer) return;
     const t = e.changedTouches[0], dx = t.clientX - swipe.x, dy = t.clientY - swipe.y;
     if (Math.abs(dx) < 60 || Math.abs(dx) <= 1.5 * Math.abs(dy)) return;
-    swipe.busy = true;
-    try { await setDate(shiftDate(state.date, dx < 0 ? 1 : -1)); } finally { swipe.busy = false; }
+    stepDay(dx < 0 ? 1 : -1);
   }, { passive: true });
   sc.addEventListener('touchcancel', () => { swipe.on = false; }, { passive: true });
 }
@@ -933,7 +933,7 @@ $('note').addEventListener('input', () => {
   clearTimeout(noteTimer); noteTimer = setTimeout(flushNote, 700);
 });
 $('note').addEventListener('blur', flushNote);
-document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushNote(); else { scheduleSync(300); } });
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushNote(); else { scheduleSync(300); pullDay(); } });
 window.addEventListener('pagehide', flushNote);
 
 // ---------- Fotoğraf ----------
@@ -1228,7 +1228,9 @@ async function sync(manual = false) {
       }
       if (payload.attendance !== undefined || payload.note !== undefined) await post(payload);
       const cur = await dbGet('days', day.key);
-      if (cur && cur.updatedAt === stamp) { cur.synced = true; cur.attDirty = false; cur.noteDirty = false; await dbPut('days', cur); await dbDel('queue', q.id); }
+      if (cur && cur.updatedAt === stamp) { cur.synced = true; cur.attDirty = false; cur.noteDirty = false;
+        if (state.day && state.day.key === cur.key && state.day.updatedAt === stamp) { state.day.synced = true; state.day.attDirty = false; state.day.noteDirty = false; }
+        await dbPut('days', cur); await dbDel('queue', q.id); }
       refreshBanner();
     }
     // 2) fotoğraflar, tek tek
@@ -1259,7 +1261,7 @@ async function sync(manual = false) {
 let syncTimer;
 function scheduleSync(ms = 1500) { clearTimeout(syncTimer); syncTimer = setTimeout(() => sync(), ms); }
 $('syncNow').addEventListener('click', () => sync(true));
-window.addEventListener('online', () => { sync(); pullDay(); pullRoster(); });
+window.addEventListener('online', () => { sync(); pullDay(true); pullRoster(); });
 setInterval(() => { if (document.visibilityState === 'visible') sync(); }, 60000);
 
 // ---------- Sunucudan çekme (Drive > telefon) ----------
@@ -1295,6 +1297,102 @@ function mergeServerRoster(r, serverTeams, moveArchived = false) {
   }
   return { changed, push };
 }
+// Gün önbelleği: kayıt yerelde (IndexedDB) durur, ekranda hemen gösterilir; sunucudan arka planda tazelenir.
+// Her kayıtta fetchedAt (son indirme zamanı) tutulur. Yerelde değiştirilmiş (kirli) puantaj/not hiçbir zaman ezilmez.
+const DAY_FRESH_MS = 60 * 1000, PREFETCH_FRESH_MS = 5 * 60 * 1000, PREFETCH_CONC = 3;
+const inflight = new Map(); // "site|tarih" -> Promise
+const normAtt = (o) => { const a = {}; for (const [n, v] of Object.entries(o || {})) if (Number(v) > 0) a[n] = Number(v); return a; };
+const shownMain = (site, date) => !!state.day && state.site === site && state.date === date && state.day.key === dayKey(site, date);
+// DOM'daki çipleri state'e göre tek tek eşitler. Düzen değişecekse false döner (tam çizim gerekir).
+function reconcileChips() {
+  const att = state.day.attendance, box = $('chips'), seen = new Set(), todo = [];
+  for (const b of box.querySelectorAll('.chip[data-name]')) {
+    const n = b.dataset.name, v = att[n] || 0; seen.add(n);
+    const cur = b.classList.contains('full') ? 1 : b.classList.contains('half') ? 0.5 : 0;
+    const blk = isBlocked(n);
+    if (b.closest('.hiddengrp,.orphangrp') && !(v > 0)) return false;
+    if (cur !== v || blk !== b.classList.contains('blocked')) todo.push([b, v, blk]);
+  }
+  for (const n of Object.keys(att)) if (att[n] > 0 && !seen.has(n)) return false;
+  for (const [b, v, blk] of todo) {
+    if (blk !== b.classList.contains('blocked')) {
+      b.classList.toggle('blocked', blk);
+      if (blk) b.setAttribute('aria-disabled', 'true'); else b.removeAttribute('aria-disabled');
+      const e = b.querySelector('em.oth');
+      if (blk && !e) { const c = document.createElement('em'); c.className = 'oth'; c.textContent = LOC[otherSite()]; b.appendChild(c); }
+      else if (!blk && e) e.remove();
+    }
+    const cur = b.classList.contains('full') ? 1 : b.classList.contains('half') ? 0.5 : 0;
+    if (cur !== v) { setChipState(b, v); popChip(b); }
+  }
+  updateCounts();
+  return true;
+}
+const refreshChips = () => { if (!reconcileChips()) renderChips(); };
+// Sunucudan bir günü indirir; aynı gün için aynı anda tek istek. Ekranda gösterilen gün ise yalnızca değişen kısım güncellenir.
+function fetchDay(site, date) {
+  const k = dayKey(site, date);
+  if (inflight.has(k)) return inflight.get(k);
+  const p = (async () => {
+    let data;
+    try { data = await post({ action: 'getDay', site, date }); } catch { return null; }
+    if (!data) return null;
+    const att = normAtt(data.attendance), note = data.note == null ? '' : String(data.note);
+    const rec0 = await dbGet('days', k);
+    const main = shownMain(site, date);
+    const base = main ? state.day : (rec0 || { key: k, site, date, attendance: {}, note: '', updatedAt: 0, synced: true });
+    let attCh = false, noteCh = false;
+    if (!isAttDirty(base) && JSON.stringify(att) !== JSON.stringify(normAtt(base.attendance))) { base.attendance = att; attCh = true; }
+    if (!isNoteDirty(base) && !(main && (noteDirty || document.activeElement === $('note'))) && note !== (base.note || '')) { base.note = note; noteCh = true; }
+    base.fetchedAt = Date.now();
+    await dbPut('days', base);
+    if (shownMain(site, date)) {
+      state.loading = false;
+      if (attCh) refreshChips(); else updateCounts();
+      if (noteCh) renderNote();
+    } else if (state.site && state.date === date && site === otherSite() && state.day) {
+      const oa = base.attendance || {};
+      if (JSON.stringify(oa) !== JSON.stringify(state.otherAtt || {})) { state.otherAtt = oa; refreshChips(); }
+    }
+    return base;
+  })().finally(() => {
+    inflight.delete(k);
+    if (shownMain(site, date) && state.loading) { state.loading = false; updateCounts(); }
+  });
+  inflight.set(k, p);
+  return p;
+}
+// Önden indirme: en fazla PREFETCH_CONC eşzamanlı; pencere değişince sıradaki eski işler bırakılır.
+let pfGen = 0, pfActive = 0, pfQueue = [];
+function pfPump() {
+  while (pfActive < PREFETCH_CONC && pfQueue.length) {
+    const j = pfQueue.shift();
+    if (j.gen !== pfGen || inflight.has(dayKey(j.s, j.d))) continue;
+    pfActive++;
+    fetchDay(j.s, j.d).finally(() => { pfActive--; pfPump(); });
+  }
+}
+async function prefetchWindow(force = false) {
+  if (!state.site || !canPull()) return;
+  const gen = ++pfGen, site = state.site, o = otherSite(), D = state.date, t = today();
+  pfQueue = [];
+  const jobs = [];
+  const add = (s, d, age) => { if (s && d <= t) jobs.push({ s, d, age, gen }); };
+  add(site, D, DAY_FRESH_MS); add(o, D, DAY_FRESH_MS);
+  for (const off of [-1, 1, -2, -3]) { const d = shiftDate(D, off); add(site, d, PREFETCH_FRESH_MS); add(o, d, PREFETCH_FRESH_MS); }
+  for (const j of jobs) {
+    const rec = await dbGet('days', dayKey(j.s, j.d));
+    if (gen !== pfGen) return;
+    if (!force && rec && rec.fetchedAt && Date.now() - rec.fetchedAt < j.age) continue;
+    pfQueue.push(j);
+  }
+  // Ekrandaki gün ve diğer şantiyenin aynı günü sıra beklemez
+  const urgent = pfQueue.filter((j) => j.d === D);
+  pfQueue = pfQueue.filter((j) => j.d !== D);
+  for (const j of urgent) if (!inflight.has(dayKey(j.s, j.d))) fetchDay(j.s, j.d);
+  pfPump();
+}
+const pullDay = (force = false) => prefetchWindow(force);
 async function pullRoster() {
   if (!canPull()) return;
   let data;
@@ -1313,28 +1411,6 @@ async function pullRoster() {
     if (changed && !$('settings').hidden) renderTeamSettings();
   }
   if (push) await enqueueRoster();
-}
-async function pullDay() {
-  const site = state.site, date = state.date;
-  if (!site || !canPull()) return;
-  pullOther();
-  let data;
-  try { data = await post({ action: 'getDay', site, date }); } catch { return; }
-  if (!data || state.site !== site || state.date !== date || !state.day) return;
-  const day = state.day;
-  let changed = false;
-  if (!isAttDirty(day)) {
-    const att = {};
-    for (const [n, v] of Object.entries(data.attendance || {})) if (Number(v) > 0) att[n] = Number(v);
-    if (JSON.stringify(att) !== JSON.stringify(day.attendance || {})) { day.attendance = att; changed = true; }
-  }
-  if (!isNoteDirty(day) && !noteDirty) {
-    const note = data.note == null ? '' : String(data.note);
-    if (note !== (day.note || '')) { day.note = note; changed = true; }
-  }
-  if (!changed) return;
-  await dbPut('days', day);
-  renderChips(); renderNote();
 }
 
 // ---------- Ayarlar ----------
@@ -1372,14 +1448,14 @@ function openSettings() {
   renderLog();
   renderSurum();
   const s = getSettings(); $('setUrl').value = s.url; $('setKey').value = s.key;
-  $('testResult').textContent = ''; ui.hideTeam = null; ui.delName = null; ui.archName = null; ui.editName = null; renderTeamSettings(); renderLocInfo(); showAnim($('settings'), 'sheet-in', 260);
+  $('testResult').textContent = ''; ui.hideTeam = null; ui.delName = null; ui.archName = null; ui.editName = null; renderTeamSettings(); renderLocInfo(); showAnim($('settings'), 'sheet-in', 380);
   pullRoster();
 }
 function readSettingsForm() { ls.set('sd_settings', { url: $('setUrl').value.trim(), key: $('setKey').value.trim() }); }
 function autoSaveSettings() { readSettingsForm(); $('testResult').textContent = 'Kaydedildi ✓'; }
 ['setUrl', 'setKey'].forEach((id) => { $(id).addEventListener('input', autoSaveSettings); $(id).addEventListener('change', autoSaveSettings); });
 $('btnSettings').addEventListener('click', openSettings);
-$('closeSettings').addEventListener('click', () => { readSettingsForm(); hideAnim($('settings'), 200); scheduleSync(300); });
+$('closeSettings').addEventListener('click', () => { readSettingsForm(); hideAnim($('settings'), 260); scheduleSync(300); });
 $('saveSettings').addEventListener('click', () => { readSettingsForm(); $('testResult').textContent = 'Kaydedildi ✓'; });
 $('testConn').addEventListener('click', async () => {
   readSettingsForm();
@@ -1414,8 +1490,8 @@ document.querySelectorAll('[data-save-loc]').forEach((b) => b.addEventListener('
 document.querySelectorAll('#siteTabs button').forEach((b) => b.addEventListener('click', () => selectSite(b.dataset.site)));
 document.querySelectorAll('#picker [data-site]').forEach((b) => b.addEventListener('click', () => selectSite(b.dataset.site)));
 document.addEventListener('touchstart', () => {}, { passive: true }); // iOS: :active (basılı durum) hemen çalışsın
-$('prevDay').addEventListener('click', () => setDate(shiftDate(state.date, -1)));
-$('nextDay').addEventListener('click', () => setDate(shiftDate(state.date, 1)));
+$('prevDay').addEventListener('click', () => stepDay(-1));
+$('nextDay').addEventListener('click', () => stepDay(1));
 $('dateInput').addEventListener('change', (e) => setDate(e.target.value));
 
 // ---------- Başlangıç ----------

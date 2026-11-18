@@ -757,6 +757,93 @@ await ctx3.close();
   await ctx6.close();
 }
 
+// ---- 2.9: gün önbelleği + önden indirme ----
+{
+  const ctx9 = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const p9 = await ctx9.newPage();
+  const errs9 = [];
+  p9.on('pageerror', (e) => errs9.push('pageerror: ' + e.message));
+  const iso9 = (off) => { const d = new Date(); d.setDate(d.getDate() + off); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+  const T = iso9(0), Y = iso9(-1);
+  const days9 = { ['gundogdu|' + Y]: { attendance: { Ali: 1 }, note: '' }, ['gundogdu|' + T]: { attendance: { Veli: 0.5 }, note: '' } };
+  const log9 = [], active9 = new Set(); let dup9 = 0, hold9 = false;
+  await ctx9.route(GAS, async (route) => {
+    const body = JSON.parse(route.request().postData() || '{}');
+    let reply = { ok: true };
+    if (body.action === 'getRoster') reply = { ok: true, teams: [{ name: 'Ekip', hidden: false, members: ['Ali', 'Veli'] }] };
+    else if (body.action === 'getDay') {
+      const k = body.site + '|' + body.date;
+      if (active9.has(k)) dup9++;
+      active9.add(k);
+      const snap = days9[k] || { attendance: {}, note: '' };
+      await new Promise((r) => setTimeout(r, 800));
+      active9.delete(k); log9.push(k);
+      reply = { ok: true, attendance: snap.attendance, note: snap.note };
+    } else if (body.action === 'saveDay') { if (hold9) await new Promise((r) => setTimeout(r, 6000)); }
+    await route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(reply) });
+  });
+  await p9.addInitScript(([url]) => {
+    if (!localStorage.getItem('sd_settings')) localStorage.setItem('sd_settings', JSON.stringify({ url, key: 'k' }));
+    if (!localStorage.getItem('sd_site')) localStorage.setItem('sd_site', JSON.stringify('gundogdu'));
+  }, [GAS]);
+  await p9.goto(base + 'index.html');
+  await p9.waitForSelector('#chips .chip[data-name="Ali"]');
+  const until9 = async (fn, ms = 12000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await fn()) return true; await p9.waitForTimeout(50); } return false; };
+  const want = []; for (let i = -3; i <= 0; i++) for (const s of ['gundogdu', 'koseilyas']) want.push(s + '|' + iso9(i));
+  await until9(() => want.every((k) => log9.includes(k)));
+  check(want.every((k) => log9.includes(k)), '2.9: önden indirme D-3..D, iki şantiye (' + log9.length + ' istek)');
+  check(dup9 === 0, '2.9: aynı gün için eşzamanlı tekrar istek yok');
+  check(log9.every((k) => k.split('|')[1] <= T), '2.9: bugünden ilerisi indirilmez');
+  // (a) önceki gün hemen görünür
+  const ms = await p9.evaluate(() => new Promise((res) => {
+    const t0 = performance.now();
+    document.getElementById('prevDay').click();
+    const tick = () => {
+      const c = document.querySelector('#chips .chip[data-name="Ali"]');
+      if (document.getElementById('dateInput').value && c && c.classList.contains('full')) res(performance.now() - t0);
+      else if (performance.now() - t0 > 3000) res(99999); else requestAnimationFrame(tick);
+    };
+    tick();
+  }));
+  check(ms < 100, '2.9: önceki gün önbellekten ' + Math.round(ms) + ' ms içinde göründü');
+  check((await p9.inputValue('#dateInput')) === Y, '2.9: tarih önceki güne geçti');
+  await p9.waitForTimeout(400);
+  // (c) ekranda olmayan günün cevabı arayüzü değiştirmez
+  await p9.evaluate((k) => new Promise((res, rej) => {
+    const r = indexedDB.open('santiye-defteri'); r.onsuccess = () => {
+      const st = r.result.transaction('days', 'readwrite').objectStore('days'); const g = st.get(k);
+      g.onsuccess = () => { const v = g.result; v.fetchedAt = 0; st.put(v).onsuccess = () => res(); };
+    }; r.onerror = () => rej(r.error);
+  }), 'gundogdu|' + Y);
+  days9['gundogdu|' + Y] = { attendance: { Veli: 1 }, note: '' };
+  const n0 = log9.length;
+  await p9.evaluate(() => window.dispatchEvent(new Event('online'))); // ekrandaki günü yeniden indirir (800 ms gecikmeli)
+  await p9.click('#nextDay'); // cevap gelmeden bugüne dön (kilitli geçiş kuyruğa alınır)
+  await until9(async () => (await p9.inputValue('#dateInput')) === T, 3000);
+  await p9.waitForTimeout(250);
+  const snapT = await p9.evaluate(() => [...document.querySelectorAll('#chips .chip')].map((c) => c.dataset.name + ':' + c.className).join('|'));
+  await until9(() => log9.slice(n0).includes('gundogdu|' + Y), 4000);
+  await p9.waitForTimeout(300);
+  const snapT2 = await p9.evaluate(() => [...document.querySelectorAll('#chips .chip')].map((c) => c.dataset.name + ':' + c.className).join('|'));
+  check(snapT === snapT2 && (await p9.inputValue('#dateInput')) === T, '2.9: ekranda olmayan günün cevabı arayüzü değiştirmedi');
+  await p9.click('#prevDay'); await p9.waitForTimeout(500);
+  check(await p9.locator('#chips .chip[data-name="Veli"]').evaluate((b) => b.classList.contains('full')), '2.9: ama önbelleğe yazıldı (geri gelince yeni veri)');
+  await p9.click('#nextDay'); await p9.waitForTimeout(500);
+  // (d) kirli yerel puantaj önden indirmeyle ezilmez
+  hold9 = true;
+  const ali = p9.locator('#chips .chip[data-name="Ali"]');
+  await ali.click();
+  check(await ali.evaluate((b) => b.classList.contains('full')), '2.9: Ali işaretlendi (yerel)');
+  days9['gundogdu|' + T] = { attendance: { Veli: 1 }, note: '' };
+  const n1 = log9.length;
+  await p9.evaluate(() => window.dispatchEvent(new Event('online')));
+  await until9(() => log9.slice(n1).includes('gundogdu|' + T), 4000);
+  await p9.waitForTimeout(300);
+  check(await ali.evaluate((b) => b.classList.contains('full')) && await p9.locator('#chips .chip[data-name="Veli"]').evaluate((b) => b.classList.contains('half')), '2.9: kirli puantaj sunucu verisiyle ezilmedi');
+  check(errs9.length === 0, '2.9: sayfa hatası yok ' + errs9.join('|'));
+  await ctx9.close();
+}
+
 // Ayar yoksa Türkçe uyarı
 await page.unroute(GAS);
 await page.evaluate(() => localStorage.setItem('sd_settings', '{}'));

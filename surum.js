@@ -1,5 +1,6 @@
 // Sürüm notları — her güncellemede en üste yeni satır eklenir.
 export const SURUMLER = [
+  { v: '2.9', t: '18.11.2026', n: ['Günler önceden indirilir: bulunduğun günün 3 gün öncesi ve sonrası iki şantiye için hazır; günler arası geçiş beklemesiz.', 'Daha önce açılan gün anında görünür, arka planda güncellenir; ekran yanıp sönmez.', 'Animasyonlar daha belirgin ve yumuşak.'] },
   { v: '2.8.1', t: '18.11.2026', n: ['Düzeltme: alt şantiye sekmeleri ekranın en altına geri alındı.'] },
   { v: '2.8', t: '18.11.2026', n: ['Aynı kişi aynı gün iki şantiyede toplam 1 günü geçemez: başka şantiyede tam gün varsa isim kapalı görünür, yarım gün varsa yarım gün işaretlenir.', 'Dünküyle aynı: son 7 günün en yakın kaydını bugüne işler; bugün işaretlenenler değişmez.', 'Ekranı sağa/sola kaydırarak gün değiştirilir.', 'Üst durum çubuğundaki beyaz bulanıklık giderildi (sayfa değil, içerik kayar).'] },
   { v: '2.7', t: '18.11.2026', n: ['Akıcılık: yumuşak animasyonlar (isim dokunma, sekme ve gün geçişi, Ayarlar açılışı, bildirimler, fotoğraflar).', 'Kaydırmayı yavaşlatan bulanıklık efektleri kaldırıldı; animasyonlar ekran kartında çalışır (120 Hz hedefli).'] },

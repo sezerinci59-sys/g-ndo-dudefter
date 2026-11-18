@@ -97,13 +97,13 @@ textarea{resize:vertical;min-height:110px}
 .chips{display:flex;flex-wrap:wrap;gap:8px}
 .chip{min-height:46px;padding:6px 12px;border-radius:9px;border:1px solid #b4b8bd;background:linear-gradient(#fff,#f3f4f6);display:inline-flex;
   align-items:center;gap:8px;cursor:pointer;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;touch-action:manipulation;
-  position:relative;overflow:hidden;transition:transform 90ms cubic-bezier(.4,0,1,1);font-size:15px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.9),0 1px 2px rgba(0,0,0,.12)}
-.chip.pressing{transform:scale(.96);will-change:transform}
+  position:relative;overflow:hidden;transition:transform 120ms cubic-bezier(.4,0,1,1);font-size:15px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.9),0 1px 2px rgba(0,0,0,.12)}
+.chip.pressing{transform:scale(.94);will-change:transform}
 /* Basılı tutma ilerlemesi: yalnızca transform (scaleX 0→1, 450 ms = yarım gün süresi) */
 .chip::after{content:"";position:absolute;inset:0;background:rgba(0,0,0,.2);transform:scaleX(0);transform-origin:left center;pointer-events:none}
 .chip.pressing::after{transform:scaleX(1);transition:transform 450ms linear}
-.chip.pop{animation:chipPop 180ms cubic-bezier(.2,.8,.2,1);will-change:transform}
-@keyframes chipPop{0%{transform:scale(1)}45%{transform:scale(1.06)}100%{transform:scale(1)}}
+.chip.pop{animation:chipPop 280ms cubic-bezier(.2,.8,.2,1) both;will-change:transform}
+@keyframes chipPop{0%{transform:scale(1)}40%{transform:scale(1.1)}100%{transform:scale(1)}}
 .chip small{font-size:12px;font-weight:700}
 .chip.full{background:linear-gradient(180deg,rgba(255,255,255,.45) 0,rgba(255,255,255,.1) 49%,rgba(0,0,0,0) 50%),linear-gradient(#49a64b,#2f8a2f 55%,#237024);border-color:#1a5a1c;color:#fff;text-shadow:0 1px 1px rgba(0,0,0,.45);box-shadow:inset 0 0 0 1px rgba(255,255,255,.3),0 1px 3px rgba(0,0,0,.25)}
 .chip.half{background:linear-gradient(180deg,rgba(255,255,255,.55) 0,rgba(255,255,255,.12) 49%,rgba(0,0,0,0) 50%),linear-gradient(#fbcb55,#eba61a 55%,#d99207);border-color:#a8760c;color:#1f1300;box-shadow:inset 0 0 0 1px rgba(255,255,255,.4),0 1px 3px rgba(0,0,0,.25)}
@@ -260,7 +260,7 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;background:linear-grad
 #chips .chip small{display:none}
 
 /* ===== 2.7 Akıcılık: yalnızca transform/opacity animasyonları ===== */
-:root{--ease-in:cubic-bezier(.2,.8,.2,1);--ease-out:cubic-bezier(.4,0,1,1)}
+:root{--ease-in:cubic-bezier(.2,.8,.2,1);--ease-out:cubic-bezier(.4,0,1,1);--ease-nav:cubic-bezier(.22,.9,.24,1);--ease-over:cubic-bezier(.34,1.2,.5,1)}
 button,input,select,textarea,label,summary,.chip{touch-action:manipulation}
 .overlay,.sheet.scroll,.camov{overscroll-behavior-y:contain}
 .card:has(#note),.card:has(#photoGrid){content-visibility:auto;contain-intrinsic-size:auto 260px}
@@ -274,22 +274,22 @@ button,input,select,textarea,label,summary,.chip{touch-action:manipulation}
 .tabs{--tpl:calc(8px + env(safe-area-inset-left));--tpr:calc(8px + env(safe-area-inset-right));position:fixed}
 .tab-ind{position:absolute;top:5px;left:var(--tpl);height:46px;width:calc((100% - var(--tpl) - var(--tpr) - 6px) / 2);border-radius:6px;pointer-events:none;
   background:linear-gradient(#fff 0,#e8f4ff 49%,#cfe6fb 50%,#eaf5ff 100%);border:2px solid #0b4fb8;box-shadow:0 0 0 2px #ffd34d,inset 0 0 0 1px #fff;opacity:0}
-.tabs.ready .tab-ind{opacity:1;transition:transform 220ms var(--ease-in)}
+.tabs.ready .tab-ind{opacity:1;transition:transform 300ms var(--ease-over)}
 .tabs[data-pos="1"] .tab-ind{transform:translateX(calc(100% + 6px))}
 .tabs button{position:relative;z-index:1}
 .tabs.ready button.active{background:transparent;border-color:transparent;box-shadow:none}
 
 /* Sayfa geçişleri */
-main.pg-up .card{animation:pgUp 200ms var(--ease-in) both;will-change:transform,opacity}
-main.pg-next .card{animation:pgNext 200ms var(--ease-in) both;will-change:transform,opacity}
-main.pg-prev .card{animation:pgPrev 200ms var(--ease-in) both;will-change:transform,opacity}
-@keyframes pgUp{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
-@keyframes pgNext{from{opacity:0;transform:translateX(16px)}to{opacity:1;transform:none}}
-@keyframes pgPrev{from{opacity:0;transform:translateX(-16px)}to{opacity:1;transform:none}}
+main.pg-up .card{animation:pgUp 320ms var(--ease-nav) both;will-change:transform,opacity}
+main.pg-next .card{animation:pgNext 340ms var(--ease-nav) both;will-change:transform,opacity}
+main.pg-prev .card{animation:pgPrev 340ms var(--ease-nav) both;will-change:transform,opacity}
+@keyframes pgUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:none}}
+@keyframes pgNext{from{opacity:0;transform:translateX(48px)}to{opacity:1;transform:none}}
+@keyframes pgPrev{from{opacity:0;transform:translateX(-48px)}to{opacity:1;transform:none}}
 
 /* Ayarlar: alttan kayar */
-#settings.sheet-in{animation:sheetIn 260ms var(--ease-in);will-change:transform}
-#settings.leaving{animation:sheetOut 200ms var(--ease-out) forwards;will-change:transform;pointer-events:none}
+#settings.sheet-in{animation:sheetIn 380ms var(--ease-over);will-change:transform}
+#settings.leaving{animation:sheetOut 260ms var(--ease-out) forwards;will-change:transform;pointer-events:none}
 @keyframes sheetIn{from{transform:translateY(100%)}to{transform:none}}
 @keyframes sheetOut{from{transform:none}to{transform:translateY(100%)}}
 /* Kamera */
@@ -297,9 +297,9 @@ main.pg-prev .card{animation:pgPrev 200ms var(--ease-in) both;will-change:transf
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
 
 /* Bildirim (toast): translateX(-50%) ortalamayı korur */
-.toast.in{animation:toastIn 200ms var(--ease-in);will-change:transform,opacity}
-.toast.leaving{animation:toastOut 160ms var(--ease-out) forwards;will-change:opacity;pointer-events:none}
-@keyframes toastIn{from{opacity:0;transform:translateX(-50%) translateY(14px)}to{opacity:1;transform:translateX(-50%)}}
+.toast.in{animation:toastIn 300ms var(--ease-in);will-change:transform,opacity}
+.toast.leaving{animation:toastOut 220ms var(--ease-out) forwards;will-change:opacity;pointer-events:none}
+@keyframes toastIn{from{opacity:0;transform:translateX(-50%) translateY(28px)}to{opacity:1;transform:translateX(-50%)}}
 @keyframes toastOut{from{opacity:1;transform:translateX(-50%)}to{opacity:0;transform:translateX(-50%)}}
 
 /* Bilgi balonu */
@@ -307,11 +307,11 @@ main.pg-prev .card{animation:pgPrev 200ms var(--ease-in) both;will-change:transf
 @keyframes barIn{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:none}}
 
 /* Fotoğraf küçük resimleri */
-.photo.pin{animation:fadeIn 180ms var(--ease-in);will-change:opacity}
-.photo.pin img{animation:photoIn 180ms var(--ease-in);will-change:transform}
+.photo.pin{animation:fadeIn 300ms var(--ease-in);will-change:opacity}
+.photo.pin img{animation:photoIn 300ms var(--ease-in);will-change:transform}
 .photo.pout{animation:fadeOut 160ms var(--ease-out) forwards;will-change:opacity;pointer-events:none}
 .photo.pout img{animation:photoOut 160ms var(--ease-out) forwards;will-change:transform}
-@keyframes photoIn{from{transform:scale(.94)}to{transform:none}}
+@keyframes photoIn{from{transform:scale(.85)}to{transform:none}}
 @keyframes photoOut{from{transform:none}to{transform:scale(.94)}}
 @keyframes fadeOut{from{opacity:1}to{opacity:0}}
 
@@ -331,3 +331,4 @@ body{height:100vh;min-height:-webkit-fill-available}
 .top{order:1;flex:0 0 auto}
 #scroller{order:2;padding-bottom:16px}
 .tabs{order:3;position:relative!important;left:auto;right:auto;bottom:auto;flex:0 0 auto}
+main{overflow-x:clip}
