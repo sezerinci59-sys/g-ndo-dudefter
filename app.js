@@ -1241,8 +1241,18 @@ async function openCamera(kind) {
   cam.urls.forEach((u) => URL.revokeObjectURL(u)); cam.urls = [];
   $('camStrip').textContent = ''; $('camCount').textContent = '0 fotoğraf';
   const v = $('camVideo'); v.srcObject = stream; showAnim($('cam'), 'in', 160);
+  try { const st = stream.getVideoTracks()[0].getSettings(); logEv(`Kamera akışı: ${st.width}x${st.height}` + (st.zoom ? ` zoom ${st.zoom}` : '')); } catch { /* yoksay */ }
+  v.onloadedmetadata = () => { fitCamVideo(); logEv(`Önizleme: ${v.videoWidth}x${v.videoHeight}`); };
   try { await v.play(); } catch { /* autoplay zaten var */ }
 }
+// iPhone'da object-fit bazen ölçeklemiyor: önizlemeyi ekrana sığacak boyutu elle hesaplayarak yerleştir
+function fitCamVideo() {
+  const v = $('camVideo'), box = $('cam'); if (!v.videoWidth) return;
+  const W = box.clientWidth, H = box.clientHeight, s = Math.min(W / v.videoWidth, H / v.videoHeight);
+  const w = Math.round(v.videoWidth * s), h = Math.round(v.videoHeight * s);
+  Object.assign(v.style, { width: w + 'px', height: h + 'px', left: Math.round((W - w) / 2) + 'px', top: Math.round((H - h) / 2) + 'px', right: 'auto', bottom: 'auto' });
+}
+window.addEventListener('resize', () => { if (cam.stream) fitCamVideo(); });
 function camShot() {
   const v = $('camVideo');
   if (!cam.stream || !v.videoWidth) return;

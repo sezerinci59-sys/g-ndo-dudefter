@@ -378,3 +378,6 @@ main.boot .card:nth-of-type(n+5){animation-delay:280ms}
 .team{transition:padding-bottom 320ms var(--ease-nav)}
 .team.collapsed{padding-bottom:0}
 .team.collapsed .tbody{margin:0}
+
+/* 2.9.5: kamera ekranı tam yükseklik (iPhone kısa ekran yüksekliği hatası) */
+.camov{bottom:auto;height:100vh;height:100dvh}
