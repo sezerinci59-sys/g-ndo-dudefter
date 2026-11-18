@@ -895,6 +895,49 @@ await ctx3.close();
   await ctx7.close();
 }
 
+// ---- 2.9.4: şantiye bazında ekip gizleme ----
+{
+  const ctxH = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const pH = await ctxH.newPage();
+  const errsH = [];
+  pH.on('pageerror', (e) => errsH.push('pageerror: ' + e.message));
+  await pH.addInitScript(() => { if (!localStorage.getItem('sd_site')) localStorage.setItem('sd_site', JSON.stringify('gundogdu')); });
+  await pH.goto(base + 'index.html');
+  await pH.waitForSelector('#chips', { state: 'attached' });
+  for (const t of ['Beton', 'Demir']) { await pH.fill('#newTeam', t); await pH.click('#addTeam'); }
+  const secH = (t) => pH.locator('#chips section.team[data-team]', { has: pH.locator('h3', { hasText: new RegExp('^' + t + '$') }) });
+  for (const [t, ns] of [['Beton', ['Ali', 'Veli']], ['Demir', ['Can']]]) for (const n of ns) { await secH(t).locator('form.teamadd input').fill(n); await secH(t).locator('form.teamadd button').click(); }
+  await pH.locator('#chips .chip[data-name="Ali"]').click();
+  await pH.locator('#chips .chip[data-name="Can"]').click();
+  await pH.click('#btnSettings');
+  const tsH = pH.locator('#teamSettings .tset', { has: pH.locator('input[value="Beton"]') });
+  await tsH.locator('button[data-sshide]').click();
+  check(await tsH.locator('button[data-sshideyes]').count() === 1 && /Evet, Gündoğdu'da gizle/.test(await tsH.locator('button[data-sshideyes]').textContent()), '2.9.4: ikinci adım onayı');
+  await tsH.locator('button[data-sshideno]').click();
+  check(await tsH.locator('button[data-sshide]').count() === 1 && /Bu şantiyede gösterme \(Gündoğdu\)/.test(await tsH.locator('button[data-sshide]').textContent()), '2.9.4: Vazgeç geri döner');
+  check((await pH.locator('#chips section.team[data-team]').count()) === 2, '2.9.4: Vazgeç sonrası ekipler duruyor');
+  await tsH.locator('button[data-sshide]').click(); await tsH.locator('button[data-sshideyes]').click();
+  check(/Gündoğdu'da gizli/.test(await tsH.textContent()) && await tsH.locator('button[data-sshow]').count() === 1, '2.9.4: gizli satırı ve Göster düğmesi');
+  await pH.click('#closeSettings'); await pH.waitForTimeout(400);
+  check((await secH('Beton').count()) === 0 && (await secH('Demir').count()) === 1, '2.9.4: Gündoğdu ana ekranda Beton yok, Demir var');
+  check((await pH.locator('#chips .hiddengrp .chip[data-name="Ali"]').count()) === 1 && (await pH.locator('#chips .chip[data-name="Veli"]').count()) === 0, '2.9.4: kaydı olan Ali görünür, Veli görünmez');
+  await pH.locator('#chips .hiddengrp .chip[data-name="Ali"]').click(); await pH.waitForTimeout(200);
+  check((await pH.locator('#chips .chip[data-name="Ali"]').count()) === 0, '2.9.4: gizli ekipten kayıt kaldırılabilir');
+  await pH.locator('#siteTabs button[data-site="koseilyas"]').click(); await pH.waitForTimeout(500);
+  check((await secH('Beton').count()) === 1 && (await pH.locator('#chips .chip[data-name="Veli"]').count()) === 1, '2.9.4: Köseilyas etkilenmedi');
+  await pH.locator('#siteTabs button[data-site="gundogdu"]').click(); await pH.waitForTimeout(500);
+  await pH.waitForTimeout(300);
+  await pH.evaluate(() => localStorage.removeItem('sd_site_hide'));
+  await pH.reload(); await pH.waitForSelector('#chips', { state: 'attached' }); await pH.waitForTimeout(500);
+  check((await secH('Beton').count()) === 0, '2.9.4: localStorage silinince ayar IndexedDB den geri geldi');
+  await pH.click('#btnSettings');
+  await pH.locator('#teamSettings .tset', { has: pH.locator('input[value="Beton"]') }).locator('button[data-sshow]').click();
+  await pH.click('#closeSettings'); await pH.waitForTimeout(400);
+  check((await secH('Beton').count()) === 1, '2.9.4: Göster ile ekip geri geldi');
+  check(errsH.length === 0, '2.9.4: sayfa hatası yok ' + errsH.join('|'));
+  await ctxH.close();
+}
+
 // Ayar yoksa Türkçe uyarı
 await page.unroute(GAS);
 await page.evaluate(() => localStorage.setItem('sd_settings', '{}'));

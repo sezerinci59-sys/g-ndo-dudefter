@@ -17,7 +17,7 @@ const ls = {
     if (META_KEYS.includes(k)) mirrorMeta(k, v);
   }
 };
-const META_KEYS = ['sd_settings', 'sd_coords', 'sd_site'];
+const META_KEYS = ['sd_settings', 'sd_coords', 'sd_site', 'sd_site_hide'];
 function mirrorMeta(k, v) { dbPut('meta', { k, v }).catch(() => {}); }
 async function syncMeta() {
   for (const k of META_KEYS) {
@@ -153,6 +153,17 @@ const isIthal = (n) => /(^|[^\p{L}])ithal($|[^\p{L}])/u.test(lcTr(n).replace(/ı
 const orderMembers = (arr) => [...arr.filter((m) => !isIthal(m.name)), ...arr.filter((m) => isIthal(m.name))];
 const teamMembers = (id) => orderMembers(state.members.filter((m) => m.teamId === id));
 const shownTeams = () => state.teams.filter((t) => !t.hidden && !isArsiv(t));
+// Şantiye bazında ekip gizleme (sadece telefonda; sunucuya gitmez): { gundogdu: [ekip adı], koseilyas: [...] }
+const readSiteHide = () => { const o = ls.get('sd_site_hide', {}) || {}; return o && typeof o === 'object' ? o : {}; };
+const siteHideSet = (site) => new Set((Array.isArray(readSiteHide()[site]) ? readSiteHide()[site] : []).map(lcTr));
+const isSiteHidden = (t, site = state.site) => siteHideSet(site).has(lcTr(t.name));
+function setSiteHidden(t, site, on) {
+  const o = readSiteHide(), k = lcTr(t.name);
+  const arr = (Array.isArray(o[site]) ? o[site] : []).filter((n) => lcTr(n) !== k);
+  if (on) arr.push(t.name);
+  o[site] = arr; ls.set('sd_site_hide', o);
+}
+const mainTeams = () => shownTeams().filter((t) => !isSiteHidden(t));
 async function readShared() {
   const rec = await dbGet('names', ROSTER_KEY);
   if (rec && Array.isArray(rec.teams)) return { teams: rec.teams, members: rec.members || [], pulled: !!rec.pulled };
@@ -354,7 +365,7 @@ function renderChips() {
   const box = $('chips'); box.textContent = '';
   const att = state.day.attendance;
   const label = state.date === today() ? 'Bugün' : 'Bu gün';
-  const visible = shownTeams();
+  const visible = mainTeams();
   if (!visible.length) {
     const p = document.createElement('div'); p.className = 'hint';
     p.textContent = 'Henüz ekip yok. Aşağıdan "+ Yeni ekip" ile ekleyin.';
@@ -390,7 +401,7 @@ function renderChips() {
   }
   // Gizli ekiplerde / listede olmayıp o gün kaydı olanlar görünür kalır
   const byName = new Map(state.members.map((m) => [m.name, m]));
-  const hiddenIds = new Set(state.teams.filter((t) => t.hidden).map((t) => t.id));
+  const hiddenIds = new Set(state.teams.filter((t) => t.hidden || isSiteHidden(t)).map((t) => t.id));
   const hid = [], orphan = [];
   for (const n of Object.keys(att)) {
     if (!(att[n] > 0)) continue;
@@ -597,6 +608,7 @@ $('chips').addEventListener('click', async (e) => {
     toggleTeam(t.closest('section.team'));
   } else if (t.dataset.all) {
     const mem = state.members.filter((m) => m.teamId === t.dataset.all);
+    const tm = state.teams.find((q) => q.id === t.dataset.all); if (tm && isSiteHidden(tm)) return;
     const todo = mem.map((m) => [m.name, limitedTarget(m.name, 1)]).filter(([n, tg]) => tg > 0 && (att[n] || 0) < tg);
     if (!todo.length) return;
     const changed = todo.map(([n]) => n);
@@ -694,6 +706,12 @@ function renderTeamSettings() {
     if (t.hidden) w.appendChild(btn('Geri getir', { 'data-unhide': t.id }, 'btn small'));
     else if (ui.hideTeam === t.id) w.appendChild(el('div', { className: 'tset-row' }, btn('Evet, gizle', { 'data-hideyes': t.id }, 'btn small danger'), btn('Vazgeç', { 'data-hideno': '1' })));
     else w.appendChild(btn('Ekibi gizle (işi bitti)', { 'data-hide': t.id }));
+    if (!t.hidden) {
+      const sn = SITES[state.site];
+      if (isSiteHidden(t)) w.appendChild(el('div', { className: 'tset-row' }, el('span', { className: 'hint', text: `${sn}'da gizli` }), btn(`${sn}'da göster`, { 'data-sshow': t.id }, 'btn small')));
+      else if (ui.siteHideTeam === t.id) w.appendChild(el('div', { className: 'tset-row' }, btn(`Evet, ${sn}'da gizle`, { 'data-sshideyes': t.id }, 'btn small danger'), btn('Vazgeç', { 'data-sshideno': '1' })));
+      else w.appendChild(btn(`Bu şantiyede gösterme (${sn})`, { 'data-sshide': t.id }));
+    }
     return w;
   };
   renderTeamFilter();
@@ -722,7 +740,11 @@ function renderTeamSettings() {
 $('teamSettings').addEventListener('click', async (e) => {
   const t = e.target.closest('button'); if (!t) return;
   const d = t.dataset; let changed = false;
-  if (d.hide) { ui.hideTeam = d.hide; }
+  if (d.sshide) { ui.siteHideTeam = d.sshide; }
+  else if (d.sshideno) { ui.siteHideTeam = null; }
+  else if (d.sshideyes) { const x = state.teams.find((q) => q.id === d.sshideyes); if (x) setSiteHidden(x, state.site, true); ui.siteHideTeam = null; renderTeamSettings(); renderChips(); return; }
+  else if (d.sshow) { const x = state.teams.find((q) => q.id === d.sshow); if (x) setSiteHidden(x, state.site, false); renderTeamSettings(); renderChips(); return; }
+  else if (d.hide) { ui.hideTeam = d.hide; }
   else if (d.hideno) { ui.hideTeam = null; }
   else if (d.hideyes) { const x = state.teams.find((q) => q.id === d.hideyes); if (x) x.hidden = true; ui.hideTeam = null; changed = true; }
   else if (d.unhide) { const x = state.teams.find((q) => q.id === d.unhide); if (x) x.hidden = false; changed = true; }
@@ -731,7 +753,9 @@ $('teamSettings').addEventListener('click', async (e) => {
     const x = state.teams.find((q) => q.id === d.trename);
     if (!v || !x || v === x.name) return;
     if (state.teams.some((q) => q !== x && q.name.toLocaleLowerCase('tr') === v.toLocaleLowerCase('tr'))) return toast('Bu ekip zaten var.');
+    const wasHid = Object.keys(SITES).filter((k) => isSiteHidden(x, k));
     x.name = v; changed = true; toast('Ekip adı değişti.');
+    for (const k of wasHid) setSiteHidden({ name: v }, k, true);
   }
   else if (d.arch) { ui.archName = d.arch; ui.delName = null; }
   else if (d.archno) { ui.archName = null; }
@@ -820,7 +844,7 @@ function xlColors(teamName, seen) {
   return seen.get(k);
 }
 // Ay için satırlar: [{team, name, att:{gün:değer}, exit}] ekip sırasıyla
-function buildXlRows(att, info, ym) {
+function buildXlRows(att, info, ym, site) {
   const groups = new Map(); // lc ekip adı -> {name, people}
   const grp = (name) => { const k = lcTr(name); if (!groups.has(k)) groups.set(k, { name, people: [] }); return groups.get(k); };
   const hasAtt = (n) => Object.keys(att[n] || {}).length > 0;
@@ -830,7 +854,8 @@ function buildXlRows(att, info, ym) {
   const add = (m, team, exit) => { seen.add(m.name); grp(team).people.push({ name: m.name, att: att[m.name] || {}, exit }); };
   for (const t of state.teams) {
     if (isArsiv(t)) continue;
-    for (const m of teamMembers(t.id)) add(m, t.name, '');
+    const sh = site && isSiteHidden(t, site);
+    for (const m of teamMembers(t.id)) { if (sh && !hasAtt(m.name)) continue; add(m, t.name, ''); }
   }
   if (at) for (const m of orderMembers(state.members.filter((q) => q.teamId === at.id))) {
     const i = info[m.name] || {};
@@ -874,7 +899,7 @@ async function makeXlsx(ym, site, att, info) {
   const fill = (hex) => ({ type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF' + hex } });
   const colors = new Map();
   let r = 6, no = 0;
-  for (const g of buildXlRows(att, info, ym)) {
+  for (const g of buildXlRows(att, info, ym, site)) {
     const pair = xlColors(g.name, colors);
     g.people.forEach((p, idx) => {
       no++;
@@ -962,6 +987,8 @@ $('copyYesterday').addEventListener('click', async () => {
   let added = false, count = 0;
   for (const [n, v] of Object.entries(prev.attendance)) {
     if (!(v > 0) || att[n] > 0) continue; // bugün işaretli olanlar değişmez
+    const pm = state.members.find((m) => m.name === n), pt = pm && state.teams.find((q) => q.id === pm.teamId);
+    if (pt && isSiteHidden(pt)) continue; // bu şantiyede gizli ekip
     const t = limitedTarget(n, v); if (t <= 0) continue;
     att[n] = t; count++;
     if (!hasName(n)) { state.members.push({ name: n, teamId: ensureEkipsiz().id }); added = true; }
@@ -1614,7 +1641,7 @@ function openSettings() {
   renderLog();
   renderSurum();
   const s = getSettings(); $('setUrl').value = s.url; $('setKey').value = s.key;
-  $('testResult').textContent = ''; ui.hideTeam = null; ui.delName = null; ui.archName = null; ui.editName = null; renderTeamSettings(); renderLocInfo(); showAnim($('settings'), 'sheet-in', 380);
+  $('testResult').textContent = ''; ui.hideTeam = null; ui.siteHideTeam = null; ui.delName = null; ui.archName = null; ui.editName = null; renderTeamSettings(); renderLocInfo(); showAnim($('settings'), 'sheet-in', 380);
   pullRoster();
 }
 function readSettingsForm() { ls.set('sd_settings', { url: $('setUrl').value.trim(), key: $('setKey').value.trim() }); }
