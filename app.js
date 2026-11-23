@@ -1296,6 +1296,9 @@ async function openCamera(kind) {
   try { const st = stream.getVideoTracks()[0].getSettings(); logEv(`Kamera akışı: ${st.width}x${st.height}` + (st.zoom ? ` zoom ${st.zoom}` : '')); } catch { /* yoksay */ }
   v.onloadedmetadata = () => { fitCamVideo(); logEv(`Önizleme: ${v.videoWidth}x${v.videoHeight}`); };
   try { await v.play(); } catch { /* autoplay zaten var */ }
+  // Akış hazır olunca birkaç kez yerleştir (iPhone'da metadata olayı bazen kaçıyor)
+  v.onplaying = v.onresize = () => fitCamVideo();
+  [0, 120, 400, 1000].forEach((ms) => setTimeout(fitCamVideo, ms));
 }
 // iPhone'da object-fit bazen ölçeklemiyor: önizlemeyi ekrana sığacak boyutu elle hesaplayarak yerleştir
 function fitCamVideo() {
@@ -2095,3 +2098,22 @@ init();
 // iPhone'da iki parmakla yakınlaştırmayı kapat (düzen sabit kalsın)
 ['gesturestart', 'gesturechange', 'gestureend'].forEach((ev) => document.addEventListener(ev, (e) => e.preventDefault(), { passive: false }));
 document.addEventListener('touchmove', (e) => { if (e.touches && e.touches.length > 1) e.preventDefault(); }, { passive: false });
+
+// ---------- iPhone ana ekran uygulamasında gerçek ekran yüksekliği ----------
+// iOS bazı sürümlerde 100vh/100dvh'yi alttaki güvenli alan kadar kısa veriyor; alt sekmeler yukarı kayıp
+// altta gri boşluk kalıyordu. Ana ekrandan açılınca ekranın kendi yüksekliği kullanılır.
+function setAppHeight() {
+  let h = window.innerHeight;
+  try {
+    if (navigator.standalone || matchMedia('(display-mode: standalone)').matches) {
+      const portrait = matchMedia('(orientation: portrait)').matches;
+      const sh = portrait ? Math.max(screen.width, screen.height) : Math.min(screen.width, screen.height);
+      if (sh > h) h = sh;
+    }
+  } catch { /* yoksay */ }
+  document.documentElement.style.setProperty('--app-h', h + 'px');
+}
+setAppHeight();
+window.addEventListener('resize', setAppHeight);
+window.addEventListener('orientationchange', () => setTimeout(setAppHeight, 300));
+try { logEv(`Ekran: iç ${innerHeight} · ekran ${screen.height} · uygulama ${getComputedStyle(document.documentElement).getPropertyValue('--app-h')} · ana ekran ${!!navigator.standalone}`); } catch { /* yoksay */ }

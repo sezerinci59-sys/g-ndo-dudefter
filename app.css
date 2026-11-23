@@ -391,3 +391,8 @@ main.boot .card:nth-of-type(n+5){animation-delay:280ms}
 #lockBtn{white-space:nowrap;flex:0 0 auto}
 .tstatus{margin:8px 0 6px;padding:6px 10px;border-radius:4px;background:#e8f4e8;border:1px solid #9fc79f;font-weight:700;font-size:14px}
 .tstatus.off{background:#fbe9e7;border-color:#e0a59c;color:#8a1c1c}
+
+/* 3.0.1: gerçek ekran yüksekliği (JS --app-h) */
+body{height:var(--app-h,100dvh)!important}
+.camov{height:var(--app-h,100dvh)!important}
+html{background:#1f5fae}
