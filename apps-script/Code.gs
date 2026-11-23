@@ -178,13 +178,23 @@ function getNotesSheet_(ss) {
   return sh;
 }
 
+// Sayıyla tutulan ekipler: "<ekip> (kişi sayısı)" satırında 1..999 tam sayı kabul edilir (3.1).
+var COUNT_SUFFIX = ' (kişi sayısı)';
+function isCountName_(n) {
+  return n.length > COUNT_SUFFIX.length && n.slice(-COUNT_SUFFIX.length) === COUNT_SUFFIX;
+}
+function validAttValue_(n, v, allowZero) {
+  if (isCountName_(n)) return v === Math.floor(v) && v >= (allowZero ? 0 : 1) && v <= 999;
+  return (allowZero ? v >= 0 : v > 0) && v <= 1;
+}
+
 function cleanAttendance_(att) {
   var out = {};
   if (!att || typeof att !== 'object') return out;
   Object.keys(att).forEach(function (name) {
     var n = String(name).trim();
     var v = Number(att[name]);
-    if (n && v > 0 && v <= 1) out[n] = v;
+    if (n && validAttValue_(n, v, false)) out[n] = v;
   });
   return out;
 }
@@ -198,7 +208,7 @@ function cleanChanges_(ch) {
     if (!n) return;
     var raw = ch[name];
     var v = (raw === null || raw === '' || raw === false) ? 0 : Number(raw);
-    if (v >= 0 && v <= 1) out[n] = v;
+    if (validAttValue_(n, v, true)) out[n] = v;
   });
   return out;
 }

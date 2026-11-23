@@ -19,9 +19,9 @@ const ls = {
     if (!fromServer && SHARED_META.includes(k)) touchMeta(k);
   }
 };
-const META_KEYS = ['sd_settings', 'sd_coords', 'sd_site', 'sd_site_hide', 'sd_arsiv', 'sd_meta_at'];
+const META_KEYS = ['sd_settings', 'sd_coords', 'sd_site', 'sd_site_hide', 'sd_team_mode', 'sd_arsiv', 'sd_meta_at'];
 // İki telefonun ortak ayarları (Drive'da AYARLAR sayfası; telefondaki kopya önbellek)
-const SHARED_META = ['sd_site_hide', 'sd_arsiv', 'sd_coords'];
+const SHARED_META = ['sd_site_hide', 'sd_team_mode', 'sd_arsiv', 'sd_coords'];
 const metaAt = () => { const o = ls.get('sd_meta_at', {}); return o && typeof o === 'object' ? o : {}; };
 function setMetaAt(k, at) { const o = metaAt(); o[k] = at; ls.set('sd_meta_at', o); }
 function touchMeta(k) { setMetaAt(k, Math.max(Date.now(), (metaAt()[k] || 0) + 1)); enqueueMeta(k); }
@@ -100,7 +100,7 @@ const fmtNum = (n) => String(n).replace('.', ',');
 
 // ---------- Durum ----------
 const state = { loading: false, otherAtt: {}, site: null, date: today(), day: null, teams: [], members: [], gone: [], pulled: false, pulled2: false, rosterLoaded: false };
-const ui = { hideTeam: null, delName: null, archName: null, editName: null, filterTeam: null, q: '', closed: new Set() };
+const ui = { hideTeam: null, delName: null, archName: null, editName: null, filterTeam: null, modeConfirm: null, q: '', closed: new Set() };
 let photoUrls = [];
 
 // ---------- Animasyon yardımcıları (yalnızca transform/opacity; will-change sadece animasyon sırasında) ----------
@@ -175,6 +175,32 @@ function setSiteHidden(t, site, on) {
   o[site] = arr; ls.set('sd_site_hide', o);
 }
 const mainTeams = () => shownTeams().filter((t) => !isSiteHidden(t));
+// Puantaj türü (iki şantiyede ortak): { "<ekip adı>": "sayi" }; yazılmayan ekip "isim" (varsayılan)
+const COUNT_SUFFIX = ' (kişi sayısı)', COUNT_MAX = 999;
+const countKey = (teamName) => teamName + COUNT_SUFFIX;
+const isCountKey = (n) => n.length > COUNT_SUFFIX.length && n.endsWith(COUNT_SUFFIX);
+const countKeyTeam = (n) => n.slice(0, -COUNT_SUFFIX.length);
+const readTeamMode = () => { const o = ls.get('sd_team_mode', {}) || {}; return o && typeof o === 'object' && !Array.isArray(o) ? o : {}; };
+const isCountTeam = (t) => Object.entries(readTeamMode()).some(([k, v]) => v === 'sayi' && lcTr(k) === lcTr(t.name));
+function setTeamMode(t, mode) {
+  const o = {}, k = lcTr(t.name);
+  for (const [n, v] of Object.entries(readTeamMode())) if (lcTr(n) !== k) o[n] = v;
+  if (mode === 'sayi') o[t.name] = 'sayi';
+  ls.set('sd_team_mode', o);
+}
+const countOf = (t) => { const v = Number(state.day && state.day.attendance[countKey(t.name)]); return v > 0 ? v : 0; };
+// Özet: adlı kişiler + (varsa) sayıyla tutulan ekipler. segs: [metin, sayı, metin, sayı, ...]
+function summarySegs(l2) {
+  const att = state.day.attendance;
+  const named = Object.entries(att).filter(([n, v]) => v > 0 && !isCountKey(n)).map(([, v]) => v);
+  const segs = [l2 + ': ', named.length, ' kişi (', fmtNum(named.reduce((a, b) => a + b, 0)), ' gün)'];
+  for (const [n, v] of Object.entries(att)) {
+    if (!isCountKey(n) || !(v > 0)) continue;
+    segs[segs.length - 1] += ' · ' + countKeyTeam(n) + ': ';
+    segs.push(v, '');
+  }
+  return segs;
+}
 async function readShared() {
   const rec = await dbGet('names', ROSTER_KEY);
   if (rec && Array.isArray(rec.teams)) return { teams: rec.teams, members: rec.members || [], gone: rec.gone || [], pulled: !!rec.pulled, pulled2: !!rec.pulled2 };
@@ -361,15 +387,19 @@ function setRoll(el, segs, animate) {
 function updateCounts() {
   const att = state.day.attendance, label = state.date === today() ? 'bugün' : 'bu gün';
   for (const sec of $('chips').querySelectorAll('section.team[data-team]')) {
+    if (sec.dataset.count) {
+      const t = state.teams.find((q) => q.id === sec.dataset.team), n = t ? countOf(t) : 0;
+      setRoll(sec.querySelector('.team-count'), [label + ' ', n, ' kişi'], true);
+      setCountNum(sec, n);
+      continue;
+    }
     const mem = teamMembers(sec.dataset.team);
     const present = mem.filter((m) => att[m.name] > 0).length;
     const c = sec.querySelector('.team-count');
     if (c) setRoll(c, [label + ' ', present, '/', mem.length], true);
   }
-  const vals = Object.values(att).filter((v) => v > 0);
-  const sum = vals.reduce((a, b) => a + b, 0);
   const l2 = state.date === today() ? 'Bugün' : 'Bu gün';
-  setRoll($('summary'), state.loading ? 'Yükleniyor…' : [l2 + ': ', vals.length, ' kişi (', fmtNum(sum), ' gün)'], true);
+  setRoll($('summary'), state.loading ? 'Yükleniyor…' : summarySegs(l2), true);
 }
 // Tek tek chip günceller. Düzenin değişeceği durumda (gizli/listede olmayan grup) false döner: tam yeniden çizim gerekir.
 function patchChips(names, stagger = false) {
@@ -383,6 +413,52 @@ function patchChips(names, stagger = false) {
   els.forEach(([b, v], i) => { setChipState(b, v); popChip(b, stagger ? i : 0); });
   updateCounts();
   return true;
+}
+// Sayıyla tutulan ekip: büyük − / N / + sayacı
+function setCountNum(sec, n) {
+  const nb = sec.querySelector('[data-cnum]'); if (!nb) return;
+  setRoll(nb, ['', n], true);
+  nb.setAttribute('aria-label', 'Kişi sayısı ' + n + ', yazmak için dokun');
+  const mi = sec.querySelector('[data-step="-1"]'), pl = sec.querySelector('[data-step="1"]');
+  if (mi) mi.disabled = n <= 0;
+  if (pl) pl.disabled = n >= COUNT_MAX;
+}
+function countBlock(t) {
+  const w = document.createElement('div'); w.className = 'stepper'; w.dataset.cteam = t.id;
+  const mk = (txt, step, label) => { const b = document.createElement('button'); b.type = 'button'; b.className = 'step'; b.dataset.step = String(step); b.textContent = txt; b.setAttribute('aria-label', t.name + ': ' + label); return b; };
+  const mid = document.createElement('div'); mid.className = 'stepmid';
+  const nb = document.createElement('button'); nb.type = 'button'; nb.className = 'stepnum'; nb.dataset.cnum = t.id;
+  mid.appendChild(nb);
+  w.append(mk('−', -1, 'bir kişi azalt'), mid, mk('+', 1, 'bir kişi ekle'));
+  return w;
+}
+function setCount(t, n) {
+  const att = state.day.attendance, key = countKey(t.name);
+  n = Math.max(0, Math.min(COUNT_MAX, Math.round(n)));
+  if ((att[key] || 0) === n) return false;
+  if (n > 0) att[key] = n; else delete att[key];
+  updateCounts();
+  const num = $('chips').querySelector(`.stepper[data-cteam="${t.id}"] .stepnum`);
+  if (num) popChip(num);
+  return true;
+}
+function startCountEdit(btn) {
+  const mid = btn.parentNode; if (mid.querySelector('input')) return;
+  const i = document.createElement('input'); i.type = 'text'; i.className = 'stepinput'; i.inputMode = 'numeric'; i.pattern = '[0-9]*'; i.maxLength = 3;
+  i.setAttribute('inputmode', 'numeric'); i.autocomplete = 'off';
+  i.setAttribute('aria-label', 'Kişi sayısı (0-999)');
+  i.value = btn.textContent.replace(/\D/g, '') === '0' ? '' : btn.textContent.replace(/\D/g, '');
+  btn.hidden = true; mid.appendChild(i); i.focus(); i.select();
+}
+async function endCountEdit(i, commit) {
+  if (i._done) return; i._done = true;
+  const mid = i.parentNode, btn = mid && mid.querySelector('.stepnum');
+  const sec = i.closest('section.team'), t = sec && state.teams.find((q) => q.id === sec.dataset.team);
+  const raw = i.value.trim();
+  i.remove(); if (btn) btn.hidden = false;
+  if (!commit || !t) return;
+  if (raw !== '' && !/^\d{1,3}$/.test(raw)) return toast('0 ile 999 arası bir sayı girin.');
+  if (setCount(t, raw === '' ? 0 : Number(raw))) await persistDay(state.day, { att: [countKey(t.name)] });
 }
 function chipBtn(name, v) {
   const b = document.createElement('button'); b.type = 'button';
@@ -413,15 +489,23 @@ function renderChips() {
     const head = document.createElement('div'); head.className = 'team-head';
     const h = document.createElement('h3'); h.textContent = t.name;
     const cnt = document.createElement('span'); cnt.className = 'team-count';
-    setRoll(cnt, [label.toLowerCase() + ' ', present, '/', mem.length], false);
+    const counted = isCountTeam(t);
+    if (counted) { sec.dataset.count = '1'; setRoll(cnt, [label.toLowerCase() + ' ', countOf(t), ' kişi'], false); }
+    else setRoll(cnt, [label.toLowerCase() + ' ', present, '/', mem.length], false);
     const all = document.createElement('button'); all.type = 'button'; all.className = 'btn small ghost';
     all.dataset.all = t.id; all.textContent = 'Hepsi geldi';
     const tg = document.createElement('button'); tg.type = 'button'; tg.className = 'btn small ghost tgl'; tg.dataset.tgl = t.id;
     tg.innerHTML = '<svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false"><path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
-    const act = document.createElement('div'); act.className = 'team-act'; act.append(tg, all);
+    const act = document.createElement('div'); act.className = 'team-act'; if (counted) act.append(tg); else act.append(tg, all);
     head.append(h, cnt, act); sec.appendChild(head);
     const tbody = document.createElement('div'); tbody.className = 'tbody';
     const inn = document.createElement('div'); inn.className = 'tbody-in'; tbody.appendChild(inn); sec.appendChild(tbody);
+    if (counted) {
+      inn.appendChild(countBlock(t)); setCountNum(sec, countOf(t));
+      applyCollapsed(sec, isCollapsed(t.id));
+      box.appendChild(sec);
+      continue;
+    }
     const chips = document.createElement('div'); chips.className = 'chips';
     for (const m of mem) chips.appendChild(chipBtn(m.name, att[m.name]));
     inn.appendChild(chips);
@@ -439,7 +523,7 @@ function renderChips() {
   const hiddenIds = new Set(state.teams.filter((t) => t.hidden || isSiteHidden(t)).map((t) => t.id));
   const hid = [], orphan = [];
   for (const n of Object.keys(att)) {
-    if (!(att[n] > 0)) continue;
+    if (!(att[n] > 0) || isCountKey(n)) continue;
     const m = byName.get(n);
     if (!m) orphan.push(n); else if (hiddenIds.has(m.teamId)) hid.push(n);
   }
@@ -451,9 +535,7 @@ function renderChips() {
     for (const n of arr) chips.appendChild(chipBtn(n, att[n]));
     sec.append(h, chips); box.appendChild(sec);
   }
-  const vals = Object.values(att).filter((v) => v > 0);
-  const sum = vals.reduce((a, b) => a + b, 0);
-  setRoll($('summary'), state.loading ? 'Yükleniyor…' : [label + ': ', vals.length, ' kişi (', fmtNum(sum), ' gün)'], false);
+  setRoll($('summary'), state.loading ? 'Yükleniyor…' : summarySegs(label), false);
 }
 function renderNote() {
   const ta = $('note');
@@ -635,7 +717,13 @@ $('chips').addEventListener('contextmenu', (e) => { if (e.target.closest('.chip'
 $('chips').addEventListener('click', async (e) => {
   const t = e.target.closest('button'); if (!t) return;
   const att = state.day.attendance;
-  if (t.dataset.name) {
+  if (t.dataset.step) {
+    const sec = t.closest('section.team'), tm = sec && state.teams.find((q) => q.id === sec.dataset.team); if (!tm) return;
+    const nv = countOf(tm) + Number(t.dataset.step);
+    if (setCount(tm, nv)) await persistDay(state.day, { att: [countKey(tm.name)] });
+  } else if (t.dataset.cnum) {
+    startCountEdit(t);
+  } else if (t.dataset.name) {
     if (press.suppress) { press.suppress = false; return; }
     const n = t.dataset.name, v = att[n];
     if (!v) {
@@ -656,6 +744,13 @@ $('chips').addEventListener('click', async (e) => {
     if (!patchChips(changed, true)) renderChips(); await persistDay(state.day, { att: changed });
   }
 });
+$('chips').addEventListener('keydown', (e) => {
+  const i = e.target.closest && e.target.closest('input.stepinput'); if (!i) return;
+  if (e.key === 'Enter') { e.preventDefault(); endCountEdit(i, true); }
+  else if (e.key === 'Escape') { e.preventDefault(); endCountEdit(i, false); }
+});
+$('chips').addEventListener('input', (e) => { const i = e.target.closest && e.target.closest('input.stepinput'); if (i) i.value = i.value.replace(/\D/g, '').slice(0, 3); });
+$('chips').addEventListener('focusout', (e) => { const i = e.target.closest && e.target.closest('input.stepinput'); if (i) endCountEdit(i, true); });
 $('chips').addEventListener('submit', async (e) => {
   e.preventDefault();
   const f = e.target.closest('form.teamadd'); if (!f) return;
@@ -729,6 +824,15 @@ function renderTeamSettings() {
     const w = el('div', { className: 'tset', 'data-tset': t.id });
     const nm = el('input', { type: 'text', value: t.name, 'aria-label': 'Ekip adı' }); nm.dataset.tname = t.id; nm.setAttribute('value', t.name);
     w.appendChild(el('div', { className: 'tset-row' }, nm, btn('Adı kaydet', { 'data-trename': t.id })));
+    { // Puantaj türü: İsimle / Sayıyla
+      const cm = isCountTeam(t);
+      const sb = (text, mode, on) => { const b = btn(text, { 'data-tmode': t.id, 'data-mode': mode, 'aria-pressed': String(on) }, 'seg' + (on ? ' on' : '')); return b; };
+      w.appendChild(el('div', { className: 'tmode' }, el('span', { className: 'tmode-l', text: 'Puantaj türü:' }), el('div', { className: 'seg-group', role: 'group', 'aria-label': t.name + ' puantaj türü' }, sb('İsimle', 'isim', !cm), sb('Sayıyla', 'sayi', cm))));
+      if (ui.modeConfirm === t.id) {
+        w.appendChild(el('div', { className: 'hint', text: `${teamMembers(t.id).length} kişi silinmez; sayıyla tutulurken ana ekranda gizlenir.` }));
+        w.appendChild(el('div', { className: 'tset-row' }, btn('Evet, sayıyla tut', { 'data-modeyes': t.id }, 'btn small danger'), btn('Vazgeç', { 'data-modeno': '1' })));
+      } else if (cm) w.appendChild(el('div', { className: 'hint', text: 'Ana ekranda − / + sayacı görünür; kişiler gizli tutulur.' }));
+    }
     const mem = teamMembers(t.id).filter(matchQ);
     const det = el('details', { className: 'tmembers' }, el('summary', { text: `Kişiler (${mem.length})` }));
     for (const m of mem) {
@@ -791,7 +895,18 @@ function renderTeamSettings() {
 $('teamSettings').addEventListener('click', async (e) => {
   const t = e.target.closest('button'); if (!t) return;
   const d = t.dataset; let changed = false;
-  if (d.sshide) { ui.siteHideTeam = d.sshide; }
+  if (d.tmode) {
+    const x = state.teams.find((q) => q.id === d.tmode);
+    if (!x) return;
+    if (d.mode === 'sayi' && !isCountTeam(x)) {
+      if (teamMembers(x.id).length) ui.modeConfirm = x.id;
+      else { setTeamMode(x, 'sayi'); renderTeamSettings(); renderChips(); return; }
+    } else if (d.mode === 'isim' && isCountTeam(x)) { ui.modeConfirm = null; setTeamMode(x, 'isim'); renderTeamSettings(); renderChips(); return; }
+    else ui.modeConfirm = null;
+  }
+  else if (d.modeyes) { const x = state.teams.find((q) => q.id === d.modeyes); if (x) setTeamMode(x, 'sayi'); ui.modeConfirm = null; renderTeamSettings(); renderChips(); return; }
+  else if (d.modeno) { ui.modeConfirm = null; }
+  else if (d.sshide) { ui.siteHideTeam = d.sshide; }
   else if (d.sshideno) { ui.siteHideTeam = null; }
   else if (d.sshideyes) { const x = state.teams.find((q) => q.id === d.sshideyes); if (x) setSiteHidden(x, state.site, true); ui.siteHideTeam = null; renderTeamSettings(); renderChips(); return; }
   else if (d.sshow) { const x = state.teams.find((q) => q.id === d.sshow); if (x) setSiteHidden(x, state.site, false); renderTeamSettings(); renderChips(); return; }
@@ -805,7 +920,9 @@ $('teamSettings').addEventListener('click', async (e) => {
     if (!v || !x || v === x.name) return;
     if (state.teams.some((q) => q !== x && q.name.toLocaleLowerCase('tr') === v.toLocaleLowerCase('tr'))) return toast('Bu ekip zaten var.');
     const wasHid = Object.keys(SITES).filter((k) => isSiteHidden(x, k));
+    const wasCount = isCountTeam(x), oldName = x.name;
     x.name = v; stamp(x); changed = true; toast('Ekip adı değişti.');
+    if (wasCount) { setTeamMode({ name: oldName }, 'isim'); setTeamMode({ name: v }, 'sayi'); }
     for (const k of wasHid) setSiteHidden({ name: v }, k, true);
   }
   else if (d.arch) { ui.archName = d.arch; ui.delName = null; }
@@ -906,7 +1023,11 @@ function buildXlRows(att, info, ym, site) {
   for (const t of state.teams) {
     if (isArsiv(t)) continue;
     const sh = site && isSiteHidden(t, site);
-    for (const m of teamMembers(t.id)) { if (sh && !hasAtt(m.name)) continue; add(m, t.name, ''); }
+    if (isCountTeam(t)) {
+      const key = countKey(t.name);
+      if (!(sh && !hasAtt(key))) { seen.add(key); grp(t.name).people.push({ name: key, att: att[key] || {}, exit: '' }); }
+    }
+    for (const m of teamMembers(t.id)) { if ((sh || isCountTeam(t)) && !hasAtt(m.name)) continue; add(m, t.name, ''); }
   }
   if (at) for (const m of orderMembers(state.members.filter((q) => q.teamId === at.id))) {
     const i = info[m.name] || {};
@@ -1035,9 +1156,14 @@ $('copyYesterday').addEventListener('click', async () => {
   }
   if (!prev) return toast('Son 7 günde kayıt yok.');
   const att = state.day.attendance;
-  let added = false, count = 0; const changed = [];
+  let added = false, count = 0, counts = 0; const changed = [];
   for (const [n, v] of Object.entries(prev.attendance)) {
     if (!(v > 0) || att[n] > 0) continue; // bugün işaretli olanlar değişmez
+    if (isCountKey(n)) { // sayıyla tutulan ekip: sayı da kopyalanır
+      const ct = state.teams.find((q) => lcTr(q.name) === lcTr(countKeyTeam(n)));
+      if (ct && (isSiteHidden(ct) || !isCountTeam(ct))) continue;
+      att[n] = Math.min(COUNT_MAX, Math.round(v)); counts++; changed.push(n); continue;
+    }
     const pm = state.members.find((m) => m.name === n), pt = pm && state.teams.find((q) => q.id === pm.teamId);
     if (pt && isSiteHidden(pt)) continue; // bu şantiyede gizli ekip
     const t = limitedTarget(n, v); if (t <= 0) continue;
@@ -1046,8 +1172,8 @@ $('copyYesterday').addEventListener('click', async () => {
   }
   if (added) await persistRoster();
   renderChips();
-  if (count) await persistDay(state.day, { att: changed });
-  toast(`${count} kişi işaretlendi.`);
+  if (changed.length) await persistDay(state.day, { att: changed });
+  toast(`${count} kişi işaretlendi.` + (counts ? ` ${counts} ekibin sayısı kopyalandı.` : ''));
 });
 
 // ---------- Kaydırarak gün değiştirme ----------
@@ -1114,7 +1240,7 @@ function swipeCommit(dir) {
 // ---------- Basma dalgası (Win7 tarzı): dokunulan noktadan büyüyen daire; yalnızca transform/opacity ----------
 document.addEventListener('pointerdown', (e) => {
   if (reduceMotion.matches || (e.pointerType === 'mouse' && e.button !== 0)) return;
-  const el = e.target.closest && e.target.closest('.btn,.icon-btn,.chip,.tabs button,.pill,.big');
+  const el = e.target.closest && e.target.closest('.btn,.icon-btn,.chip,.tabs button,.pill,.big,.step,.seg');
   if (!el || el.disabled || el.classList.contains('blocked')) return;
   const r = el.getBoundingClientRect(), x = e.clientX - r.left, y = e.clientY - r.top;
   const rad = Math.hypot(Math.max(x, r.width - x), Math.max(y, r.height - y));
@@ -1775,7 +1901,7 @@ function reconcileChips() {
     if (b.closest('.hiddengrp,.orphangrp') && !(v > 0)) return false;
     if (cur !== v || blk !== b.classList.contains('blocked')) todo.push([b, v, blk]);
   }
-  for (const n of Object.keys(att)) if (att[n] > 0 && !seen.has(n)) return false;
+  for (const n of Object.keys(att)) if (att[n] > 0 && !seen.has(n) && !isCountKey(n)) return false;
   for (const [b, v, blk] of todo) {
     if (blk !== b.classList.contains('blocked')) {
       b.classList.toggle('blocked', blk);
@@ -1914,7 +2040,7 @@ function mergeMetaValue(k, srv, loc) {
   return { ...loc, ...srv };
 }
 function metaUI(k) {
-  if (k === 'sd_site_hide') rosterChangedUI();
+  if (k === 'sd_site_hide' || k === 'sd_team_mode') rosterChangedUI();
   else if (k === 'sd_arsiv') { if (!$('settings').hidden && !typingIn($('teamSettings'))) renderTeamSettings(); }
   else if (k === 'sd_coords') { if (!$('settings').hidden) renderLocInfo(); }
 }
@@ -2013,7 +2139,7 @@ function openSettings() {
   renderLog();
   renderSurum();
   const s = getSettings(); $('setUrl').value = s.url; $('setKey').value = s.key;
-  $('testResult').textContent = ''; ui.hideTeam = null; ui.siteHideTeam = null; ui.delName = null; ui.archName = null; ui.editName = null; renderTeamSettings(); renderLocInfo(); showAnim($('settings'), 'sheet-in', 380);
+  $('testResult').textContent = ''; ui.hideTeam = null; ui.siteHideTeam = null; ui.modeConfirm = null; ui.delName = null; ui.archName = null; ui.editName = null; renderTeamSettings(); renderLocInfo(); showAnim($('settings'), 'sheet-in', 380);
   pullRoster().then(pullMeta);
 }
 function readSettingsForm() { ls.set('sd_settings', { url: $('setUrl').value.trim(), key: $('setKey').value.trim() }); }

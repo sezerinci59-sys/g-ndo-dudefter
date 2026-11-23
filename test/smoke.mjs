@@ -1102,6 +1102,161 @@ await ctx3.close();
   await A.c.close(); await B.c.close();
 }
 
+// ---- 3.1: sayıyla puantaj (İzolasyoncu) ----
+{
+  const srvC = newSrv();
+  srvC.seedRoster([{ name: 'Kalıpçı', hidden: false, members: ['Raskon'] }, { name: 'İzolasyoncu', hidden: false, members: ['Ali', 'Veli'] }]);
+  const sent = [];
+  const phone = async (label) => {
+    const c = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+    const p = await c.newPage();
+    const ph = { c, p, errs: [], label };
+    p.on('pageerror', (e) => ph.errs.push('pageerror: ' + e.message));
+    await p.route(GAS, async (route) => {
+      const body = JSON.parse(route.request().postData() || '{}'); sent.push(body);
+      await route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(srvC.reply(body)) });
+    });
+    await p.addInitScript(([url]) => {
+      window.__syncIntervalMs = 1500;
+      if (!localStorage.getItem('sd_settings')) { localStorage.setItem('sd_settings', JSON.stringify({ url, key: 'K' })); localStorage.setItem('sd_site', JSON.stringify('gundogdu')); }
+    }, [GAS]);
+    await p.goto(base + 'index.html');
+    await p.waitForSelector('#chips .chip[data-name="Raskon"]', { timeout: 10000 });
+    return ph;
+  };
+  const until = async (fn, ms = 10000) => { const t = Date.now(); while (Date.now() - t < ms) { if (await fn()) return true; await new Promise((r) => setTimeout(r, 100)); } return false; };
+  const syncNow = (ph) => ph.p.evaluate(() => document.getElementById('syncNow').click());
+  const settled = (ph) => ph.p.waitForFunction(() => document.getElementById('pendingCount').textContent === '0', null, { timeout: 15000 });
+  const nowD = new Date(), T = `${nowD.getFullYear()}-${String(nowD.getMonth() + 1).padStart(2, '0')}-${String(nowD.getDate()).padStart(2, '0')}`;
+  const [ty, tm, td] = T.split('-').map(Number);
+  const Y1 = new Date(Date.UTC(ty, tm - 1, td - 1)).toISOString().slice(0, 10);
+  const CK = 'İzolasyoncu (kişi sayısı)';
+  srvC.seedDay('gundogdu', Y1, { Raskon: 1, [CK]: 4 });
+  const A = await phone('A');
+  const secOf = (ph) => ph.p.locator('#chips section.team', { has: ph.p.locator('h3', { hasText: /^İzolasyoncu$/ }) });
+  const num = async (ph) => (await secOf(ph).locator('.stepnum').textContent()).trim();
+  check((await secOf(A).locator('.chip').count()) === 2, '3.1: varsayılan İsimle: ekipte 2 çip var');
+
+  // Ayarlar > Ekipler: Sayıyla (üyeli ekip: iki adımlı onay)
+  await A.p.click('#btnSettings');
+  const tsA = A.p.locator('#teamSettings .tset', { has: A.p.locator('input[value="İzolasyoncu"]') });
+  check((await tsA.locator('button[data-tmode][data-mode="isim"].on').count()) === 1, '3.1: Puantaj türü: İsimle seçili');
+  await tsA.locator('button[data-tmode][data-mode="sayi"]').click();
+  check((await tsA.locator('button[data-modeyes]').count()) === 1 && /Evet, sayıyla tut/.test(await tsA.locator('button[data-modeyes]').textContent()), '3.1: üyeli ekipte onay düğmesi çıktı');
+  check(await A.p.evaluate(() => !(JSON.parse(localStorage.getItem('sd_team_mode') || '{}')['İzolasyoncu'])), '3.1: onaylanmadan mod değişmedi');
+  await tsA.locator('button[data-modeno]').click();
+  check((await tsA.locator('button[data-modeyes]').count()) === 0, '3.1: Vazgeç onayı kapattı');
+  await tsA.locator('button[data-tmode][data-mode="sayi"]').click();
+  await tsA.locator('button[data-modeyes]').click();
+  check(await A.p.evaluate(() => JSON.parse(localStorage.getItem('sd_team_mode') || '{}')['İzolasyoncu'] === 'sayi'), '3.1: mod sayıyla kaydedildi');
+  check((await tsA.locator('button[data-tmode][data-mode="sayi"].on').count()) === 1, '3.1: Sayıyla seçili göründü');
+  check((await tsA.locator('details.tmembers .mrow').count()) === 2, '3.1: üyeler silinmedi (ayarlarda duruyor)');
+  await A.p.click('#closeSettings'); await A.p.waitForTimeout(400);
+
+  // Ana ekran: sayaç
+  const S = secOf(A);
+  check((await S.locator('.chip').count()) === 0 && (await S.locator('[data-all]').count()) === 0 && (await S.locator('input').count()) === 0, '3.1: sayıyla ekipte çip, "Hepsi geldi", isim kutusu yok');
+  check((await S.locator('.tgl').count()) === 1 && (await S.locator('h3').textContent()) === 'İzolasyoncu', '3.1: başlık ve daralt düğmesi duruyor');
+  const bm = await S.locator('[data-step="-1"]').boundingBox(), bp = await S.locator('[data-step="1"]').boundingBox();
+  check(bm.width >= 56 && bm.height >= 56 && bp.width >= 56 && bp.height >= 56, '3.1: − / + düğmeleri en az 56 px: ' + Math.round(bm.width) + 'x' + Math.round(bm.height));
+  check((await num(A)) === '0' && /^bugün 0 kişi$/.test((await S.locator('.team-count').textContent()).trim()), '3.1: başlangıç 0, hap: ' + (await S.locator('.team-count').textContent()));
+  check(await S.locator('[data-step="-1"]').isDisabled(), '3.1: 0\'da − kapalı');
+
+  // Dünküyle aynı: sayı da gelir
+  check(await until(async () => A.p.evaluate((k) => new Promise((res) => { const r = indexedDB.open('santiye-defteri'); r.onsuccess = () => { const q = r.result.transaction('days').objectStore('days').get(k); q.onsuccess = () => res(!!q.result); }; }), 'gundogdu|' + Y1), 8000), '3.1: dünün kaydı önceden indirildi');
+  await A.p.click('#copyYesterday'); await A.p.waitForTimeout(300);
+  check((await num(A)) === '4', '3.1: Dünküyle aynı sayıyı (4) kopyaladı: ' + (await num(A)));
+  check((await A.p.textContent('#toast')).includes('1 kişi işaretlendi'), '3.1: bildirim: ' + (await A.p.textContent('#toast')));
+
+  // + + − ve yazarak
+  await S.locator('[data-step="1"]').click(); await S.locator('[data-step="1"]').click();
+  check((await num(A)) === '6', '3.1: + + sonrası 6');
+  await S.locator('[data-step="-1"]').click();
+  check((await num(A)) === '5', '3.1: − sonrası 5');
+  await S.locator('.stepnum').click();
+  const inp = S.locator('input.stepinput');
+  check((await inp.count()) === 1 && (await inp.getAttribute('inputmode')) === 'numeric', '3.1: sayıya dokununca sayısal giriş kutusu açıldı');
+  await inp.fill('37'); await inp.press('Enter');
+  check((await S.locator('input').count()) === 0 && (await num(A)) === '37', '3.1: yazılan sayı (37) uygulandı');
+  await S.locator('.stepnum').click(); await S.locator('input.stepinput').fill('1500'); await S.locator('input.stepinput').press('Enter');
+  check(Number(await num(A)) <= 999, '3.1: en çok 3 hane: 1500 yazılınca ' + (await num(A)));
+  await S.locator('.stepnum').click(); await S.locator('input.stepinput').fill('6'); await S.locator('input.stepinput').press('Enter');
+  check((await num(A)) === '6' && /^bugün 6 kişi$/.test((await S.locator('.team-count').textContent()).trim()), '3.1: yazarak 6; hap: ' + (await S.locator('.team-count').textContent()));
+  const sm0 = (await A.p.textContent('#summary')).trim();
+  check(sm0 === 'Bugün: 1 kişi (1 gün) · İzolasyoncu: 6', '3.1: özet satırı (Dünküyle aynı ile gelen Raskon + sayı): ' + sm0);
+  await A.p.locator('#chips .chip[data-name="Raskon"]').click();
+  const sm = (await A.p.textContent('#summary')).trim();
+  check(sm === 'Bugün: 0 kişi (0 gün) · İzolasyoncu: 6', '3.1: özet satırı sayıyı korur: ' + sm);
+  // daralt
+  await S.locator('.tgl').click(); await A.p.waitForTimeout(400);
+  check(await S.locator('.tbody-in').evaluate((e) => e.hasAttribute('inert')), '3.1: daraltınca sayaç etkisiz (inert)');
+  await S.locator('.tgl').click(); await A.p.waitForTimeout(400);
+
+  // Drive'a gönderim
+  await syncNow(A); await settled(A);
+  const ch = sent.filter((b) => b.action === 'saveDay' && b.changes && b.changes[CK] !== undefined).pop();
+  check(!!ch && ch.changes[CK] === 6, '3.1: saveDay changes içinde "' + CK + '": 6 → ' + JSON.stringify(ch && ch.changes));
+  const sv = srvC.day('gundogdu', T).attendance;
+  check(sv[CK] === 6, '3.1: Drive\'da sayı satırı 6: ' + JSON.stringify(sv));
+  check(!!srvC.meta().sd_team_mode && srvC.meta().sd_team_mode.value['İzolasyoncu'] === 'sayi', '3.1: mod Drive\'a (AYARLAR sd_team_mode) gitti');
+
+  // İkinci telefon: mod meta ile gelir, sayı canlı yenilemeyle
+  const B = await phone('B');
+  check(await until(async () => (await secOf(B).locator('.stepper').count()) === 1, 10000), '3.1: ikinci telefonda mod senkronlandı (sayaç göründü)');
+  check(await until(async () => (await num(B)) === '6', 8000), '3.1: ikinci telefonda sayı 6');
+  await secOf(B).locator('[data-step="1"]').click(); await syncNow(B); await settled(B);
+  check(await until(async () => (await num(A)) === '7', 8000), '3.1: B\'deki + canlı yenilemeyle A\'ya geldi (7)');
+  check(srvC.day('gundogdu', T).attendance[CK] === 7, '3.1: Drive\'da 7');
+
+  // 0'a inince hücre temizlenir
+  for (let i = 0; i < 7; i++) await secOf(A).locator('[data-step="-1"]').click();
+  await syncNow(A); await settled(A);
+  check(!(CK in srvC.day('gundogdu', T).attendance), '3.1: sayı 0 olunca Drive\'da satır boşaldı');
+  for (let i = 0; i < 6; i++) await secOf(A).locator('[data-step="1"]').click();
+  await syncNow(A); await settled(A);
+  check(srvC.day('gundogdu', T).attendance[CK] === 6, '3.1: tekrar 6');
+
+  // Excel
+  {
+    const XLDIR = '/tmp/claude-0/-home-user/dfd6405a-5f4c-5037-9513-cd07bd58f531/scratchpad/xl';
+    const xlFile = XLDIR + '/node_modules/exceljs/dist/exceljs.min.js';
+    if (!fs.existsSync(xlFile)) check(false, 'exceljs test dosyası yok: ' + xlFile);
+    else {
+      await A.p.route('https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js', (route) => route.fulfill({ status: 200, contentType: 'text/javascript', headers: { 'access-control-allow-origin': '*' }, body: fs.readFileSync(xlFile) }));
+      await A.p.click('#btnSettings');
+      await A.p.selectOption('#xlSite', 'gundogdu');
+      await A.p.fill('#xlMonth', T.slice(0, 7));
+      const dl = A.p.waitForEvent('download', { timeout: 30000 });
+      await A.p.click('#xlGo');
+      const out = '/tmp/claude-0/-home-user/dfd6405a-5f4c-5037-9513-cd07bd58f531/scratchpad/sayi_puantaj.xlsx';
+      await (await dl).saveAs(out);
+      const ExcelJS = require(XLDIR + '/node_modules/exceljs');
+      const wb = new ExcelJS.Workbook(); await wb.xlsx.readFile(out);
+      const ws = wb.worksheets[0];
+      let rr = 0, rRaskon = 0, rAli = 0; for (let r = 6; r < 40; r++) { const v = ws.getCell(r, 2).value; if (v === 'İZOLASYONCU (KİŞİ SAYISI)') rr = r; if (v === 'RASKON') rRaskon = r; if (v === 'ALİ') rAli = r; }
+      check(rr > 0, 'Excel: "İZOLASYONCU (KİŞİ SAYISI)" satırı var (satır ' + rr + ')');
+      check(rr > 0 && ws.getCell(rr, 4).value === 'İZOLASYONCU', 'Excel: görevi ekip adı');
+      check(rr > 0 && ws.getCell(rr, 7 + td).value === 6, 'Excel: gün hücresi sayı (6): ' + (rr && ws.getCell(rr, 7 + td).value));
+      const sameMonth = Y1.slice(0, 7) === T.slice(0, 7);
+      const f = rr && ws.getCell(rr, 39).value;
+      check(!!f && f.formula === `SUM(H${rr}:AL${rr})` && f.result === 6 + (sameMonth ? 4 : 0), 'Excel: AM toplamı: ' + JSON.stringify(f));
+      check(rAli === 0, 'Excel: sayıyla ekibin gizli üyeleri (kaydı yok) satır açmadı');
+      const argb = (r) => ws.getCell(r, 1).fill.fgColor.argb;
+      check(rr > 0 && /^FF/.test(argb(rr)) && argb(rr) !== 'FFFFFFFF', 'Excel: ekip rengiyle boyalı: ' + (rr && argb(rr)));
+      check(rr > 0 && rRaskon > 0 && rr > rRaskon, 'Excel: ekip sırası korundu (Kalıpçı sonra İzolasyoncu)');
+      await A.p.click('#closeSettings');
+    }
+  }
+
+  // İsimle'ye dönüş
+  await A.p.click('#btnSettings');
+  await tsA.locator('button[data-tmode][data-mode="isim"]').click();
+  await A.p.click('#closeSettings'); await A.p.waitForTimeout(300);
+  check((await secOf(A).locator('.chip').count()) === 2 && (await secOf(A).locator('.stepper').count()) === 0, '3.1: İsimle\'ye dönünce çipler geri geldi');
+  check(A.errs.length === 0 && B.errs.length === 0, '3.1: sayfa hatası yok ' + [...A.errs, ...B.errs].join('|'));
+  await A.c.close(); await B.c.close();
+}
+
 // Ayar yoksa Türkçe uyarı
 await page.unroute(GAS);
 await page.evaluate(() => localStorage.setItem('sd_settings', '{}'));

@@ -32,6 +32,30 @@ day = call({ action: 'getDay', site: 'gundogdu', date: D });
 check(!('Raskon' in day.attendance), 'başka günün değişikliği bu günü etkilemedi');
 check(lock().held === 0 && lock().max >= 1, 'kilit alındı ve bırakıldı');
 
+// ---------------------------------------------------------------- 3.1: sayıyla tutulan ekip ("<ekip> (kişi sayısı)")
+{
+  const CK = 'İzolasyoncu (kişi sayısı)', D2 = '2026-11-20';
+  let r2 = call({ action: 'saveDay', site: 'gundogdu', date: D2, changes: { [CK]: 6, Raskon: 1 } });
+  let d2 = call({ action: 'getDay', site: 'gundogdu', date: D2 });
+  check(r2.ok && d2.attendance[CK] === 6 && d2.attendance.Raskon === 1, '3.1 changes: sayı satırı 6 kabul edildi: ' + JSON.stringify(d2.attendance));
+  r2 = call({ action: 'saveDay', site: 'gundogdu', date: D2, changes: { Sefa: 6 } });
+  d2 = call({ action: 'getDay', site: 'gundogdu', date: D2 });
+  check(!('Sefa' in d2.attendance), '3.1 changes: normal isim için 6 reddedildi');
+  r2 = call({ action: 'saveDay', site: 'gundogdu', date: D2, changes: { [CK]: 1000, 'Demir (kişi sayısı)': 2.5 } });
+  d2 = call({ action: 'getDay', site: 'gundogdu', date: D2 });
+  check(d2.attendance[CK] === 6 && !('Demir (kişi sayısı)' in d2.attendance), '3.1 changes: 1000 ve ondalıklı sayı reddedildi (eski değer 6 kaldı)');
+  r2 = call({ action: 'saveDay', site: 'gundogdu', date: D2, changes: { [CK]: 8 } });
+  d2 = call({ action: 'getDay', site: 'gundogdu', date: D2 });
+  check(d2.attendance[CK] === 8, '3.1 changes: sayı güncellendi (8)');
+  r2 = call({ action: 'saveDay', site: 'gundogdu', date: D2, changes: { [CK]: null } });
+  d2 = call({ action: 'getDay', site: 'gundogdu', date: D2 });
+  check(!(CK in d2.attendance) && d2.attendance.Raskon === 1, '3.1 changes: null sayıyı temizledi');
+  call({ action: 'saveDay', site: 'gundogdu', date: D2, attendance: { [CK]: 12, Ali: 1, Veli: 5 } });
+  d2 = call({ action: 'getDay', site: 'gundogdu', date: D2 });
+  check(d2.attendance[CK] === 12 && d2.attendance.Ali === 1 && !('Veli' in d2.attendance), '3.1 eski attendance yolu: sayı 12 kabul, normal isim için 5 reddedildi');
+  check(call({ action: 'saveDay', site: 'gundogdu', date: D2, changes: { Raskon: 0.5 } }).ok, '3.1: normal isim 0.5 hâlâ kabul');
+}
+
 // ---------------------------------------------------------------- saveDay (eski attendance)
 call({ action: 'saveDay', site: 'koseilyas', date: D, attendance: { Ali: 1, Veli: 0.5 }, note: 'eski not' });
 day = call({ action: 'getDay', site: 'koseilyas', date: D });
