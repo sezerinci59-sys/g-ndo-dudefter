@@ -499,3 +499,18 @@ body,body::before{background:var(--site-bg)!important;transition:background-colo
 .dayhide-note{margin:8px 0 0;font-size:13px;opacity:.75}
 .dayhide-note[hidden]{display:none}
 .linkbtn{background:none;border:0;padding:6px 4px;margin:-6px 0;font:inherit;color:#1a5fb4;text-decoration:underline;cursor:pointer;min-height:32px}
+
+/* 3.6: şantiye paletleri
+   Gündoğdu — şeftali/terakota (gün doğumu): #FFF4EC #FFE3DA #FFD3C4 #F7A48E #C5704E
+   Köseilyas — nane/adaçayı:               #F1F8F4 #D7F0E4 #B6DDCF #8BBFA9 #3F6B58 */
+html[data-site="gundogdu"]{--site-bg:#FFF4EC;--site-l1:#FFE3DA;--site-l2:#FFD3C4;--site-acc:#F7A48E;--site-deep:#A4532F;--site-card:#FFFBF8;--site-edge:#EBC2B0}
+html[data-site="koseilyas"]{--site-bg:#F1F8F4;--site-l1:#D7F0E4;--site-l2:#B6DDCF;--site-acc:#8BBFA9;--site-deep:#2F5C49;--site-card:#FBFEFC;--site-edge:#A9CFBF}
+html[data-site] body,html[data-site] body::before{background:linear-gradient(180deg,var(--site-bg) 0%,var(--site-l1) 100%) fixed!important}
+html[data-site] .card{background:var(--site-card)!important;border-color:var(--site-edge)!important;transition:background-color 400ms ease,border-color 400ms ease}
+html[data-site] .card h2{background:linear-gradient(90deg,#fff 0%,var(--site-l2) 100%)!important;color:var(--site-deep)!important;border-bottom-color:var(--site-edge)!important}
+html[data-site] .overlay,html[data-site] .sheet{background:linear-gradient(180deg,var(--site-bg),var(--site-l1))!important}
+html[data-site] #settings h2{background:linear-gradient(90deg,#fff 0%,var(--site-l2) 100%)!important;color:var(--site-deep)!important;border-color:var(--site-edge)!important}
+html[data-site] .tset,html[data-site] .connbox{background:var(--site-card)!important;border-color:var(--site-edge)!important}
+html[data-site] input:focus,html[data-site] textarea:focus,html[data-site] select:focus{outline:2px solid var(--site-acc);outline-offset:1px}
+html[data-site] .syncdone{color:var(--site-deep)}
+html[data-site] .pills button.on,html[data-site] .seg button.on{background:var(--site-l2)!important;border-color:var(--site-deep)!important;color:var(--site-deep)!important}
