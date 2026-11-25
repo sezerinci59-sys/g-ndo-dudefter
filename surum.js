@@ -1,5 +1,6 @@
 // Sürüm notları — her güncellemede en üste yeni satır eklenir.
 export const SURUMLER = [
+  { v: '3.7.1', t: '25.11.2026', n: ['Köseilyas renk paleti: krem #EBEBD8, zeytin #637545, koyu zeytin #455230, adaçayı #9BA685.'] },
   { v: '3.7', t: '25.11.2026', n: ['Yazı tipi Lexend (uygulamanın içinde, internetsiz de çalışır).', 'Kutular beyaz ve gölgeli; şantiye rengindeki zeminden net ayrılır.'] },
   { v: '3.6', t: '25.11.2026', n: ['"Bugünlük gizle" kutusu artık şeridin üstünde açılır (parmağın altında kalmaz).', 'Şantiye renk paletleri: Gündoğdu şeftali–terakota, Köseilyas nane–adaçayı. Zemin, kart başlıkları ve Ayarlar bu tonlarda.'] },
   { v: '3.5', t: '25.11.2026', n: ['Ekip şeridine basılı tut → "Bugünlük gizle". Sadece o gün ve o şantiyede gizlenir; listenin altındaki "Göster" ile geri gelir.'] },
