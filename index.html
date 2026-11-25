@@ -40,12 +40,15 @@
   </div>
   <div id="lastSync" class="lastsync" aria-live="off" hidden></div>
 
+  <div id="syncSlot" class="syncslot">
+  <div id="syncDone" class="syncdone" aria-hidden="true">✔ Tümü gönderildi</div>
   <div id="syncBar" class="syncbar" hidden>
     <div class="sync-row">
       <span class="sync-ico" aria-hidden="true">ℹ️</span><span id="syncText" class="sync-text"><b id="pendingCount">0</b> öğe gönderilmeyi bekliyor</span>
       <span class="sync-ok" aria-hidden="true">✔</span><button type="button" id="syncNow" class="btn small">Şimdi gönder</button>
     </div>
     <div id="syncError" class="sync-error" hidden></div>
+  </div>
   </div>
 
   <section class="card">

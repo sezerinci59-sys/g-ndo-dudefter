@@ -1,5 +1,6 @@
 // Sürüm notları — her güncellemede en üste yeni satır eklenir.
 export const SURUMLER = [
+  { v: '3.2.2', t: '25.11.2026', n: ['Bildirim yokken o alanda soluk "✔ Tümü gönderildi" yazar.'] },
   { v: '3.2.1', t: '25.11.2026', n: ['Bildirim kutusunun yeri hep ayrılı; bildirim çıkınca sayfa aşağı kaymaz.'] },
   { v: '3.2', t: '25.11.2026', n: ['Fotoğraf seçme: ☆ ile seçilen fotoğrafın Drive\'daki adı "s_" ile başlar; seçim kalkınca eski adına döner. Apps Script güncellemesi gerekir.'] },
   { v: '3.1', t: '23.11.2026', n: ['Ekipler sayıyla tutulabilir (ör. İzolasyoncu): Ayarlar > Ekipler > Puantaj türü: Sayıyla. Ana ekranda − / + sayaç; Drive\'da "(kişi sayısı)" satırı. Apps Script güncellemesi gerekir.'] },
