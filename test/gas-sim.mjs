@@ -61,15 +61,18 @@ export function createGas() {
     getMimeType() { return this.mime; } isTrashed() { return this.trashed; }
     getDescription() { return this.desc; } setDescription(d) { this.desc = d; return this; }
     moveTo(folder) { folder.files.push(this); return this; }
+    setName(n) { this.name = n; return this; }
+    getParents() { return iter(this.parents || []); }
   }
   class FakeFolder {
     constructor(name) { Object.assign(this, { id: nextId('d'), name, files: [], folders: [] }); }
     getId() { return this.id; } getName() { return this.name; }
+    getParents() { return iter(this.parents || []); }
     getFilesByName(n) { return iter(this.files.filter((f) => f.name === n)); }
     getFoldersByName(n) { return iter(this.folders.filter((f) => f.name === n)); }
     getFiles() { return iter(this.files.slice()); }
-    createFolder(n) { const f = new FakeFolder(n); this.folders.push(f); folders.set(f.id, f); return f; }
-    createFile(blob) { const f = new FakeFile(blob.name, blob.bytes.length, blob.mime); this.files.push(f); files.set(f.id, f); return f; }
+    createFolder(n) { const f = new FakeFolder(n); f.parents = [this]; this.folders.push(f); folders.set(f.id, f); return f; }
+    createFile(blob) { const f = new FakeFile(blob.name, blob.bytes.length, blob.mime); f.parents = [this]; this.files.push(f); files.set(f.id, f); return f; }
   }
   const folders = new Map(), files = new Map(), spreadsheets = new Map();
   for (const id of ['1N93nP0SZE1Epzsmss7lhTc27rwNQiHPY', '1PnWIRJRoiC4DauFzMnSJqoCX0hXDUWZ9', '1atlqBgNzuRbUCiomprLghf27MluqsM-2']) {

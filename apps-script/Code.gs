@@ -91,6 +91,7 @@ function handle_(req) {
     case 'ping': return { ok: true, pong: true, v: API_VERSION };
     case 'saveDay': return saveDay_(req);
     case 'uploadPhoto': return uploadPhoto_(req);
+    case 'renamePhoto': return renamePhoto_(req);
     case 'getDay': return getDay_(req);
     case 'getRoster': return getRoster_(req);
     case 'saveRoster': return saveRoster_(req);
@@ -641,7 +642,8 @@ function uploadPhoto_(req) {
 
   // İrsaliye: numara sunucuda, kilit altında verilir (iki telefon aynı numarayı alamaz)
   if (req.kind === 'irsaliye') {
-    return withLock_(function () { return saveIrsaliye_(dayFolder_(root, dt), dt, bytes, String(req.uid || '')); });
+    var sel = /^s_/.test(String(req.name || '')); // istemci seçili gönderdiyse s_ öneki korunur
+    return withLock_(function () { return saveIrsaliye_(dayFolder_(root, dt), dt, bytes, String(req.uid || ''), sel); });
   }
 
   // Tarih klasörü kilit altında bulunur/oluşturulur (aynı adlı iki klasör olmasın)
@@ -666,8 +668,33 @@ function uploadPhoto_(req) {
   return { ok: true, v: API_VERSION, fileId: file.getId(), name: fname };
 }
 
-function saveIrsaliye_(folder, dt, bytes, uid) {
-  var re = new RegExp('^İrsaliye_' + dt.tr.replace(/\./g, '\\.') + '_(\\d+)\\.jpg$');
+// Fotoğraf seçimi: dosya adının başındaki "s_" eklenir/çıkarılır. Başka hiçbir yeniden adlandırma, silme veya çöpe atma yapılmaz.
+function renamePhoto_(req) {
+  var id = String(req.fileId || '');
+  if (!id) return { ok: false, error: 'fileId boş.' };
+  var file;
+  try { file = DriveApp.getFileById(id); } catch (e) { return { ok: false, error: 'Dosya bulunamadı.' }; }
+  var allowed = {};
+  Object.keys(SITES).forEach(function (s) { allowed[SITES[s].photoFolderId] = true; });
+  var inside = false;
+  var p1 = file.getParents();
+  while (p1.hasNext() && !inside) {
+    var dateFolder = p1.next();
+    if (allowed[dateFolder.getId()]) { inside = true; break; }
+    var p2 = dateFolder.getParents();
+    while (p2.hasNext()) { if (allowed[p2.next().getId()]) { inside = true; break; } }
+  }
+  if (!inside) return { ok: false, error: 'Dosya şantiye fotoğraf klasörlerinde değil, adı değiştirilmedi.' };
+  var cur = file.getName();
+  var base = cur.replace(/^(s_)+/, '');
+  var name = (req.selected === true || req.selected === 'true' ? 's_' : '') + base;
+  if (name !== cur) file.setName(name);
+  return { ok: true, v: API_VERSION, name: name };
+}
+
+function saveIrsaliye_(folder, dt, bytes, uid, sel) {
+  // Numara sayılırken s_ öneki yok sayılır (seçili ve seçisiz irsaliye aynı sırayı paylaşır)
+  var re = new RegExp('^(?:s_)*İrsaliye_' + dt.tr.replace(/\./g, '\\.') + '_(\\d+)\\.jpg$');
   var max = 0, it = folder.getFiles();
   while (it.hasNext()) {
     var f = it.next();
@@ -676,7 +703,7 @@ function saveIrsaliye_(folder, dt, bytes, uid) {
     var m = re.exec(f.getName());
     if (m) max = Math.max(max, Number(m[1]));
   }
-  var name = 'İrsaliye_' + dt.tr + '_' + (max + 1) + '.jpg';
+  var name = (sel ? 's_' : '') + 'İrsaliye_' + dt.tr + '_' + (max + 1) + '.jpg';
   var file = folder.createFile(Utilities.newBlob(bytes, 'image/jpeg', name));
   if (uid) file.setDescription('sd:' + uid);
   return { ok: true, v: API_VERSION, fileId: file.getId(), name: name };

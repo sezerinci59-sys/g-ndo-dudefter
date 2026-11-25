@@ -5,7 +5,7 @@ import { createGas } from './gas-sim.mjs';
 let failed = 0;
 const check = (ok, msg) => { console.log((ok ? 'GEÇTİ  ' : 'KALDI  ') + msg); if (!ok) failed++; };
 
-const { call, ssOf, sheet, folders, lock } = createGas(); // Code.gs burada yüklenir (sözdizimi denetimi)
+const { call, ssOf, sheet, folders, files, lock } = createGas(); // Code.gs burada yüklenir (sözdizimi denetimi)
 check(true, 'Code.gs sözdizimi geçerli ve yüklendi');
 
 // ---------------------------------------------------------------- Temel
@@ -165,6 +165,42 @@ const root = folders.get('1PnWIRJRoiC4DauFzMnSJqoCX0hXDUWZ9');
 check(root.folders.length === 1 && root.folders[0].files.length === 4, 'tek tarih klasörü, dört dosya');
 const k1 = call({ action: 'uploadPhoto', site: 'koseilyas', date: D, kind: 'irsaliye', name: 'x', uid: 'K1', base64: jpg });
 check(k1.name === 'İrsaliye_18.11.2026_1.jpg', 'başka şantiyede numara 1den başlar');
+// ---------------------------------------------------------------- 3.2: fotoğraf seçimi (s_ öneki)
+{
+  const up = call({ action: 'uploadPhoto', site: 'gundogdu', date: D, name: '18.11.2026_121212_9.jpg', base64: jpg });
+  let rn = call({ action: 'renamePhoto', fileId: up.fileId, selected: true });
+  check(rn.ok && rn.name === 's_18.11.2026_121212_9.jpg', 'renamePhoto: s_ eklendi: ' + rn.name);
+  rn = call({ action: 'renamePhoto', fileId: up.fileId, selected: true });
+  check(rn.ok && rn.name === 's_18.11.2026_121212_9.jpg', 'renamePhoto idempotent: ikinci seçimde s_s_ olmadı');
+  rn = call({ action: 'renamePhoto', fileId: up.fileId, selected: false });
+  check(rn.ok && rn.name === '18.11.2026_121212_9.jpg', 'renamePhoto: s_ kaldırıldı: ' + rn.name);
+  rn = call({ action: 'renamePhoto', fileId: up.fileId, selected: false });
+  check(rn.ok && rn.name === '18.11.2026_121212_9.jpg', 'renamePhoto idempotent: seçisiz tekrar aynı ad');
+  call({ action: 'renamePhoto', fileId: up.fileId, selected: true });
+  files.get(up.fileId).name = 's_s_s_18.11.2026_121212_9.jpg';
+  rn = call({ action: 'renamePhoto', fileId: up.fileId, selected: true });
+  check(rn.name === 's_18.11.2026_121212_9.jpg', 'tekrarlı s_ önekleri tek s_ olur');
+  check(files.get(up.fileId).trashed === false, 'dosya çöpe atılmadı');
+  // klasör dışı dosya reddedilir
+  const outside = folders.get('1N93nP0SZE1Epzsmss7lhTc27rwNQiHPY').createFile({ name: 'dis.jpg', bytes: [1, 2], mime: 'image/jpeg' });
+  rn = call({ action: 'renamePhoto', fileId: outside.getId(), selected: true });
+  check(rn.ok === false && outside.getName() === 'dis.jpg', 'klasör dışı dosya reddedildi, adı değişmedi');
+  check(call({ action: 'renamePhoto', fileId: 'yok', selected: true }).ok === false, 'olmayan dosya reddedilir');
+  check(call({ action: 'renamePhoto', selected: true }).ok === false, 'fileId boşsa reddedilir');
+  // uploadPhoto s_ önekini korur
+  const su = call({ action: 'uploadPhoto', site: 'gundogdu', date: D, name: 's_18.11.2026_131313_1.jpg', base64: jpg });
+  check(su.name === 's_18.11.2026_131313_1.jpg', 'uploadPhoto s_ önekini korur');
+  // irsaliye: s_ önekli istek s_ önekli ad alır; numara s_ yok sayılarak devam eder
+  const i4 = call({ action: 'uploadPhoto', site: 'gundogdu', date: D, kind: 'irsaliye', name: 's_İrsaliye_18.11.2026_1.jpg', uid: 'S4', base64: jpg });
+  check(i4.name === 's_İrsaliye_18.11.2026_4.jpg', 'irsaliye s_ önekli: numara 4 (s_ yok sayıldı): ' + i4.name);
+  const i5 = call({ action: 'uploadPhoto', site: 'gundogdu', date: D, kind: 'irsaliye', name: 'İrsaliye_18.11.2026_1.jpg', uid: 'S5', base64: jpg });
+  check(i5.name === 'İrsaliye_18.11.2026_5.jpg', 'sonraki irsaliye s_ li dosyadan sonra 5: ' + i5.name);
+  const i4b = call({ action: 'uploadPhoto', site: 'gundogdu', date: D, kind: 'irsaliye', name: 's_x', uid: 'S4', base64: jpg });
+  check(i4b.duplicate && i4b.name === 's_İrsaliye_18.11.2026_4.jpg', 'aynı uid tekrarında aynı dosya döner');
+  rn = call({ action: 'renamePhoto', fileId: i5.fileId, selected: true });
+  check(rn.name === 's_İrsaliye_18.11.2026_5.jpg', 'irsaliye seçilince s_ eklenir');
+}
+
 check(lock().held === 0, 'tüm kilitler bırakıldı');
 
 console.log(failed ? `\n${failed} kontrol başarısız` : '\nApps Script testleri geçti');

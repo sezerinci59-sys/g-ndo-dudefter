@@ -567,7 +567,11 @@ async function renderPhotos() {
     const armed = armedPhoto === p.id;
     d.className = 'pdel' + (armed ? ' armed' : ''); d.textContent = armed ? 'Sil?' : '✕';
     d.setAttribute('aria-label', armed ? 'Silmek için tekrar dokunun' : 'Fotoğrafı sil');
-    div.append(img, s);
+    const st = document.createElement('button'); st.type = 'button'; st.dataset.psel = String(p.id);
+    st.className = 'psel' + (p.selected ? ' on' : ''); st.textContent = p.selected ? '★' : '☆';
+    st.setAttribute('aria-pressed', p.selected ? 'true' : 'false'); st.setAttribute('aria-label', 'Fotoğrafı seç');
+    if (p.selected) div.classList.add('sel');
+    div.append(img, s, st);
     if (p.kind === 'irsaliye') {
       // Numara Drive'da verilir: gönderilince gerçek numara görünür
       const no = p.status === 'sent' && /_(\d+)\.jpg$/.exec(p.name || '');
@@ -585,7 +589,45 @@ async function deletePhoto(id) {
   if (p.status === 'sent') toast("Listeden kaldırıldı. Drive'daki fotoğraf duruyor.");
   await renderPhotos(); refreshBanner(); scheduleSync();
 }
+// Seçim: Drive'daki dosya adı "s_" ile başlar. Yüklenmemişse yalnızca yükleme adı değişir; yüklenmişse yeniden adlandırma kuyruğa girer.
+const selName = (n, sel) => (sel ? 's_' : '') + String(n || '').replace(/^(s_)+/, '');
+async function toggleSelect(id, btn) {
+  const want = btn ? !btn.classList.contains('on') : null;
+  const box = btn && btn.closest('.photo');
+  if (btn) { // iyimser güncelleme: veritabanını beklemeden, yeniden çizmeden
+    btn.textContent = want ? '★' : '☆'; btn.classList.toggle('on', want); btn.setAttribute('aria-pressed', want ? 'true' : 'false');
+    if (box) box.classList.toggle('sel', want);
+    if (!reduceMotion.matches) { btn.classList.remove('pop'); void btn.offsetWidth; btn.classList.add('pop'); }
+  }
+  const p = await dbGet('photos', id);
+  if (!p) return;
+  p.selected = want === null ? !p.selected : want;
+  await dbPut('photos', p);
+  if (p.status === 'sent' && p.fileId) {
+    await dbPut('queue', { id: `rename|${p.fileId}`, type: 'renamePhoto', fileId: p.fileId, selected: p.selected, photoId: p.id, rev: Date.now() + Math.random() });
+    refreshBanner(); scheduleSync();
+  }
+}
+async function syncRename(q) {
+  let r;
+  try { r = await post({ action: 'renamePhoto', fileId: q.fileId, selected: !!q.selected }); }
+  catch (err) {
+    if (!err.server) throw err;
+    if (isUnknownAction(err)) { needUpdate = true; return false; } // sırada kalır, diğer öğeler engellenmez
+    await dbDel('queue', q.id); return false; // sunucu kalıcı olarak reddetti (ör. klasör dışı): tekrar denenmez
+  }
+  const cur = await dbGet('photos', q.photoId);
+  if (cur && r && typeof r.name === 'string' && r.name && cur.fileId === q.fileId) {
+    cur.name = r.name; await dbPut('photos', cur);
+    if (state.site === cur.site && state.date === cur.date) renderPhotos();
+  }
+  const cq = await dbGet('queue', q.id);
+  if (cq && cq.rev === q.rev) await dbDel('queue', q.id);
+  return true;
+}
 $('photoGrid').addEventListener('click', async (e) => {
+  const sb = e.target.closest('[data-psel]');
+  if (sb) { e.stopPropagation(); await toggleSelect(Number(sb.dataset.psel), sb); return; }
   const b = e.target.closest('[data-pdel]'); if (!b) return;
   const id = Number(b.dataset.pdel);
   if (armedPhoto === id) {
@@ -1522,6 +1564,7 @@ function logSummary(p) {
   if (p.teams) x.push('ekip:' + p.teams.length + ' / kişi:' + p.teams.reduce((n, t) => n + (t.members || []).length, 0));
   if (p.metaKey) x.push(p.metaKey);
   if (p.name) x.push(p.name);
+  if (p.action === 'renamePhoto') x.push(p.selected ? 'seç (s_ ekle)' : 'seçimi kaldır (s_ çıkar)');
   return x.join(' ');
 }
 async function post(payload) {
@@ -1533,7 +1576,7 @@ async function post(payload) {
     else if (r && Array.isArray(r.teams)) extra = ' → ekip:' + r.teams.length + ' kişi:' + r.teams.reduce((n, t) => n + (t.members || []).length, 0);
     if (r && r.attendance) extra = ' → puantaj:' + Object.keys(r.attendance).length;
     if (r && r.noteIgnored) extra += ' → not: diğer telefondaki daha yeni';
-    if (r && payload.action === 'uploadPhoto' && r.name && r.name !== payload.name) extra += ' → ' + r.name;
+    if (r && (payload.action === 'uploadPhoto' || payload.action === 'renamePhoto') && r.name && r.name !== payload.name) extra += ' → ' + r.name;
     logEv(`OK ${sum} (${Date.now() - t0} ms)${extra}`);
     return r;
   } catch (e) { logEv(`HATA ${sum}: ${e && e.message}`); throw e; }
@@ -1722,6 +1765,7 @@ async function sync(manual = false) {
         refreshBanner();
         continue;
       }
+      if (q.type === 'renamePhoto') { if (await syncRename(q)) sentAny = true; refreshBanner(); continue; }
       if (q.type === 'saveMeta') { if (await syncMeta1(q)) sentAny = true; refreshBanner(); continue; }
       if (q.type === 'deletePhoto') {
         // Drive'dan silme kaldırıldı (silme elle yapılır): eski kuyruk öğesi atılır.
@@ -1737,7 +1781,8 @@ async function sync(manual = false) {
     for (const p of await dbIndexAll('photos', 'status', 'pending')) {
       if (!p.blob) { p.status = 'sent'; await dbPut('photos', p); continue; }
       const base64 = await blobToBase64(p.blob);
-      const body = { action: 'uploadPhoto', site: p.site, date: p.date, name: p.name, base64 };
+      const wasSel = !!p.selected;
+      const body = { action: 'uploadPhoto', site: p.site, date: p.date, name: selName(p.name, wasSel), base64 };
       if (p.kind === 'irsaliye') { // numara Drive'da verilir; tekrar gönderimde aynı dosya dönsün diye kimlik
         if (!p.uid) { p.uid = newId(); const c0 = await dbGet('photos', p.id); if (c0) { c0.uid = p.uid; await dbPut('photos', c0); } }
         body.kind = 'irsaliye'; body.uid = p.uid;
@@ -1750,7 +1795,10 @@ async function sync(manual = false) {
         try { const bm = await createImageBitmap(cur.blob); cur.thumbData = 'data:image/jpeg;base64,' + await blobToBase64(await toJpeg(bm, 240, 0.7)); } catch { /* yoksay */ }
       }
       if (r && typeof r.name === 'string' && r.name) cur.name = r.name; // Drive'ın verdiği son ad (irsaliye numarası)
-      cur.status = 'sent'; cur.fileId = r.fileId || ''; cur.blob = null; cur.thumb = null; // küçük resim yazı olarak kalır (iOS'ta Blob bozulabiliyor)
+      cur.status = 'sent'; cur.fileId = r.fileId || '';
+      if (cur.fileId && !!cur.selected !== wasSel) { // yüklenirken seçim değişti: yeni ada çevir
+        await dbPut('queue', { id: `rename|${cur.fileId}`, type: 'renamePhoto', fileId: cur.fileId, selected: !!cur.selected, photoId: cur.id, rev: Date.now() + Math.random() });
+      } cur.blob = null; cur.thumb = null; // küçük resim yazı olarak kalır (iOS'ta Blob bozulabiliyor)
       await dbPut('photos', cur);
       refreshBanner();
       if (state.site === p.site && state.date === p.date) renderPhotos();

@@ -227,7 +227,7 @@ const jpegFile = { name: 'a.jpg', mimeType: 'image/jpeg', buffer: Buffer.from(jp
 const idbPhotos = () => page.evaluate(() => new Promise((res) => {
   const r = indexedDB.open('santiye-defteri'); r.onsuccess = () => {
     const q = r.result.transaction('photos').objectStore('photos').getAll();
-    q.onsuccess = () => res(q.result.map((p) => ({ id: p.id, status: p.status, fileId: p.fileId, deleted: !!p.deleted })));
+    q.onsuccess = () => res(q.result.map((p) => ({ id: p.id, status: p.status, fileId: p.fileId, deleted: !!p.deleted, name: p.name, selected: p.selected, site: p.site, date: p.date })));
   };
 }));
 const idbQueue = () => page.evaluate(() => new Promise((res) => {
@@ -279,6 +279,76 @@ await page.evaluate(() => document.getElementById('syncNow').click()); await set
 check(!received.some((r) => r.body.action === 'deletePhoto'), "Drive'a silme isteği gönderilmedi");
 check((await idbPhotos()).length === 0 && (await idbQueue()).length === 0, 'kayıt ve kuyruk temiz');
 
+// ---- 3.2: fotoğraf seçme (★ = Drive adı s_ ile başlar) ----
+{
+  const renames = () => received.filter((r) => r.body.action === 'renamePhoto');
+  const star = () => page.locator('#photoGrid .photo .psel');
+  const lastUp = () => received.filter((r) => r.body.action === 'uploadPhoto').slice(-1)[0].body.name;
+  const dayNames = async () => { const d = (await idbPhotos())[0]; return srv.photoNames(d.site, trDay(d.date)); };
+  function trDay(iso) { const [y, m, d] = iso.split('-'); return `${d}.${m}.${y}`; }
+  mockMode = 'offline'; errors.length = 0;
+  await page.setInputFiles('#galInput', jpegFile);
+  await page.waitForSelector('#photoGrid .photo.pending');
+  const sbx = await star().boundingBox(), pbx = await page.locator('#photoGrid .photo').boundingBox();
+  check(sbx.width >= 44 && sbx.height >= 44 && sbx.x - pbx.x < 6 && sbx.y - pbx.y < 6, '3.2: yıldız sol üstte, >=44px: ' + sbx.width + 'x' + sbx.height);
+  check((await star().textContent()).trim() === '☆', '3.2: seçilmemiş ☆');
+  await star().click();
+  check((await star().textContent()).trim() === '★' && (await page.locator('#photoGrid .photo.sel').count()) === 1, '3.2: dokununca hemen ★ ve altın çerçeve');
+  const bw = await page.locator('#photoGrid .photo.sel').evaluate((e) => getComputedStyle(e).borderTopWidth);
+  check(bw === '3px', '3.2: seçili çerçeve 3px: ' + bw);
+  check((await page.locator('#photoGrid .pdel.armed').count()) === 0 && (await page.locator('#photoGrid .photo').count()) === 1, '3.2: yıldız silmeyi tetiklemedi');
+  await waitUntil(async () => (await idbPhotos()).some((p) => p.selected === true), 3000);
+  check((await idbPhotos()).some((p) => p.status === 'pending' && p.selected === true), '3.2: yerel kayıtta selected=true');
+  mockMode = 'ok'; errors.length = 0;
+  await page.evaluate(() => document.getElementById('syncNow').click()); await settle();
+  check(/^s_/.test(lastUp()), '3.2: yüklemeden önce seçilen: Drive adı s_ ile başlıyor: ' + lastUp());
+  let rec = (await idbPhotos()).find((p) => p.status === 'sent');
+  check(rec && rec.name === lastUp() && rec.selected === true && rec.fileId, '3.2: kayıt sunucu adını tuttu');
+  check((await star().textContent()).trim() === '★', '3.2: gönderildikten sonra ★ duruyor');
+  // seçimi kaldır (çevrimiçi): renamePhoto gider, ad eski haline döner
+  const r0 = renames().length;
+  await star().click();
+  check((await star().textContent()).trim() === '☆', '3.2: iyimser: hemen ☆');
+  await waitUntil(async () => renames().length === r0 + 1);
+  await settle();
+  check(renames().length === r0 + 1 && renames()[r0].body.selected === false && renames()[r0].body.fileId === rec.fileId, '3.2: renamePhoto {selected:false} gönderildi');
+  rec = (await idbPhotos()).find((p) => p.status === 'sent');
+  check(!/^s_/.test(rec.name) && rec.name === lastUp().replace(/^s_/, ''), '3.2: kayıttaki ad eski adına döndü: ' + rec.name);
+  check((await dayNames()).includes(rec.name) && !(await dayNames()).some((n) => /^s_/.test(n)), '3.2: Drive adı eski haline döndü');
+  check(received.filter((r) => r.body.action === 'deletePhoto').length === 0 && (await page.locator('#photoGrid .photo').count()) === 1, '3.2: yıldız silme yapmadı');
+  // çevrimdışı seç: kuyruğa girer, çevrimiçi olunca gider
+  mockMode = 'offline'; errors.length = 0;
+  await star().click(); await star().click(); await star().click(); // üç dokunuş: son durum seçili (coalesce)
+  await page.waitForTimeout(300);
+  const qs = (await idbQueue()).filter((q) => q.type === 'renamePhoto');
+  check(qs.length === 1 && qs[0].selected === true, '3.2: çevrimdışı: tek renamePhoto kuyrukta (son durum): ' + JSON.stringify(qs.map((q) => q.selected)));
+  const r1 = renames().length;
+  mockMode = 'ok'; errors.length = 0;
+  await page.evaluate(() => document.getElementById('syncNow').click()); await settle();
+  check(renames().length === r1 + 1 && renames()[r1].body.selected === true, '3.2: çevrimiçi olunca renamePhoto gönderildi');
+  rec = (await idbPhotos()).find((p) => p.status === 'sent');
+  check(/^s_/.test(rec.name) && (await dayNames()).includes(rec.name), '3.2: seçim sonrası kayıt ve Drive adı s_ ile: ' + rec.name);
+  // eski Apps Script: bilinmeyen işlem -> kuyrukta kalır, uyarı görünür
+  srv.unknown.add('renamePhoto'); errors.length = 0;
+  await star().click();
+  await waitUntil(async () => renames().length >= r1 + 2, 6000);
+  await page.waitForTimeout(500);
+  check((await idbQueue()).some((q) => q.type === 'renamePhoto'), '3.2: bilinmeyen işlem: renamePhoto kuyrukta kaldı');
+  await page.click('#btnSettings');
+  check(await page.locator('#updateNote').isVisible(), "3.2: Ayarlar'da Apps Script güncelleme notu görünür");
+  await page.click('#closeSettings');
+  srv.unknown.delete('renamePhoto'); errors.length = 0;
+  await page.evaluate(() => document.getElementById('syncNow').click()); await settle();
+  rec = (await idbPhotos()).find((p) => p.status === 'sent');
+  check(!/^s_/.test(rec.name) && !(await dayNames()).some((n) => /^s_/.test(n)), '3.2: güncelleme sonrası kuyruk gitti, ad eski haline döndü');
+  // temizlik: sonraki testler boş liste bekliyor
+  await star().evaluate((e) => e.closest('.photo').querySelector('.pdel').click());
+  await page.waitForSelector('#photoGrid .pdel.armed');
+  await page.locator('#photoGrid .photo .pdel').click();
+  await waitUntil(async () => (await page.locator('#photoGrid .photo').count()) === 0, 3000);
+  errors.length = 0;
+}
+
 // ---- Uygulama içi kamera ----
 errors.length = 0; // çevrimdışı taklidinden kalan yeniden deneme ağ hatası olabilir
 await page.evaluate(() => {
@@ -313,7 +383,7 @@ check(/Puantaj — Gündoğdu/.test(await page.textContent('.card-head h2')), 'P
 check((await page.locator('#siteTabs button.active').evaluate((e) => getComputedStyle(e, '::before').content)).includes('✔'), 'aktif sekmede ✔');
 const todayTr = await page.evaluate(() => { const d = new Date(), p = (n) => String(n).padStart(2, '0'); return `${p(d.getDate())}.${p(d.getMonth() + 1)}.${d.getFullYear()}`; });
 const normalUps = received.filter((r) => r.body.action === 'uploadPhoto').map((r) => r.body.name);
-check(normalUps.length > 0 && normalUps.every((n) => /^\d\d\.\d\d\.\d{4}_\d{6}_\d+\.jpg$/.test(n)), 'normal fotoğraf adı değişmedi: ' + normalUps[0]);
+check(normalUps.length > 0 && normalUps.every((n) => /^(s_)?\d\d\.\d\d\.\d{4}_\d{6}_\d+\.jpg$/.test(n)), 'normal fotoğraf adı değişmedi: ' + normalUps[0]);
 const upB5 = upCount();
 await page.click('#matBtn');
 await page.waitForSelector('#cam:not([hidden])');
