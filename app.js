@@ -315,6 +315,7 @@ function renderTabs() {
   $('puanSite').textContent = SITES[state.site] || '';
   const nav = $('siteTabs');
   nav.dataset.pos = state.site === 'koseilyas' ? '1' : '0';
+  document.documentElement.dataset.site = state.site || '';
   if (state.site && !nav.classList.contains('ready')) requestAnimationFrame(() => requestAnimationFrame(() => nav.classList.add('ready')));
 }
 const TEAM_COLORS = ['#2f7d2f', '#245edb', '#b45500', '#7a4fb5', '#c0392b', '#0f7a7a', '#8b5a2b'];

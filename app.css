@@ -435,3 +435,13 @@ html{background:#1f5fae}
 .syncdone{position:absolute;left:0;right:0;top:0;height:calc(100% - 10px);display:flex;align-items:center;justify-content:center;
   color:#5a6b5a;font-size:14px;opacity:0;transition:opacity 300ms ease;pointer-events:none}
 .syncslot:has(#syncBar[hidden]) .syncdone{opacity:.6}
+
+/* 3.3: şantiyeye göre zemin rengi */
+:root{--site-bg:#eef1f6;--site-acc:#ffd34d}
+html[data-site="gundogdu"]{--site-bg:#FBF1E4;--site-acc:#E8A25A}
+html[data-site="koseilyas"]{--site-bg:#E8F1EA;--site-acc:#5FA578}
+body,body::before{background:var(--site-bg)!important;transition:background-color 400ms ease}
+.overlay,.sheet{background:var(--site-bg)!important;transition:background-color 400ms ease}
+.top{box-shadow:0 4px 0 var(--site-acc),0 6px 8px rgba(0,30,80,.25)!important}
+.tab-ind{box-shadow:0 0 0 2px var(--site-acc),inset 0 0 0 1px #fff!important;transition:transform 300ms var(--ease-over),box-shadow 400ms ease}
+.tabs.ready button.active{color:#0b3d7a}
