@@ -445,3 +445,18 @@ body,body::before{background:var(--site-bg)!important;transition:background-colo
 .top{box-shadow:0 4px 0 var(--site-acc),0 6px 8px rgba(0,30,80,.25)!important}
 .tab-ind{box-shadow:0 0 0 2px var(--site-acc),inset 0 0 0 1px #fff!important;transition:transform 300ms var(--ease-over),box-shadow 400ms ease}
 .tabs.ready button.active{color:#0b3d7a}
+
+/* ===== 3.5: ekibi bugünlük gizle ===== */
+.team-head{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+.daypop{position:fixed;z-index:60;width:min(300px,calc(100vw - 16px));box-sizing:border-box;background:#fff;color:#000;border:1px solid #9db0c8;border-radius:8px;box-shadow:0 6px 20px rgba(0,0,0,.28);padding:10px;
+  animation:dpIn calc(260ms * var(--mf, 1)) cubic-bezier(.22,1,.36,1) both;transform-origin:top left}
+.daypop.out{animation:dpOut calc(180ms * var(--mf, 1)) ease-in both;pointer-events:none}
+.daypop-warn{margin:0 0 8px;font-size:14px;font-weight:700}
+.daypop-btns{display:flex;gap:8px;justify-content:flex-end}
+.daypop-btns .btn{min-height:44px}
+@keyframes dpIn{from{opacity:0;transform:translateY(-4px) scale(.96)}to{opacity:1;transform:none}}
+@keyframes dpOut{from{opacity:1;transform:none}to{opacity:0;transform:translateY(-4px) scale(.96)}}
+.team.fadein{animation:fadeIn calc(320ms * var(--mf, 1)) var(--ease-in) both}
+.dayhide-note{margin:8px 0 0;font-size:13px;opacity:.75}
+.dayhide-note[hidden]{display:none}
+.linkbtn{background:none;border:0;padding:6px 4px;margin:-6px 0;font:inherit;color:#1a5fb4;text-decoration:underline;cursor:pointer;min-height:32px}

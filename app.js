@@ -174,7 +174,26 @@ function setSiteHidden(t, site, on) {
   if (on) arr.push(t.name);
   o[site] = arr; ls.set('sd_site_hide', o);
 }
-const mainTeams = () => shownTeams().filter((t) => !isSiteHidden(t));
+// 3.5: bugünlük gizleme: { "<tarih>|<şantiye>": [ekip adı] }, 14 günden eski kayıtlar silinir. Sadece o gün ve o şantiyede geçerli.
+const DAYHIDE_KEY = 'sd_day_hide';
+const dhKey = (date = state.date, site = state.site) => `${date}|${site}`;
+function readDayHide() {
+  const m = ls.get(DAYHIDE_KEY, {}); const o = m && typeof m === 'object' && !Array.isArray(m) ? m : {};
+  const lim = shiftDate(today(), -14); let dirty = false;
+  for (const k of Object.keys(o)) if (k.slice(0, 10) < lim) { delete o[k]; dirty = true; }
+  if (dirty) ls.set(DAYHIDE_KEY, o);
+  return o;
+}
+const dayHideList = () => { const a = readDayHide()[dhKey()]; return Array.isArray(a) ? a : []; };
+const isDayHidden = (t) => dayHideList().some((n) => lcTr(n) === lcTr(t.name));
+function setDayHidden(t, on) {
+  const o = readDayHide(), k = dhKey(), arr = (Array.isArray(o[k]) ? o[k] : []).filter((n) => lcTr(n) !== lcTr(t.name));
+  if (on) arr.push(t.name);
+  if (arr.length) o[k] = arr; else delete o[k];
+  ls.set(DAYHIDE_KEY, o);
+}
+const dayHiddenName = (n) => { const m = state.members.find((q) => q.name === n), t = m && state.teams.find((q) => q.id === m.teamId); return !!t && isDayHidden(t); };
+const mainTeams = () => shownTeams().filter((t) => !isSiteHidden(t) && !isDayHidden(t));
 // Puantaj türü (iki şantiyede ortak): { "<ekip adı>": "sayi" }; yazılmayan ekip "isim" (varsayılan)
 const COUNT_SUFFIX = ' (kişi sayısı)', COUNT_MAX = 999;
 const countKey = (teamName) => teamName + COUNT_SUFFIX;
@@ -473,7 +492,8 @@ function chipBtn(name, v) {
   if (v) { const s = document.createElement('small'); s.textContent = v === 1 ? 'Tam' : 'Yarım'; b.appendChild(s); }
   return b;
 }
-function renderChips() {
+function renderChips(fadeTeams = false) {
+  closeDayPop(true);
   const box = $('chips'); box.textContent = '';
   const att = state.day.attendance;
   const label = state.date === today() ? 'Bugün' : 'Bu gün';
@@ -486,7 +506,7 @@ function renderChips() {
   for (const t of visible) {
     const mem = teamMembers(t.id);
     const present = mem.filter((m) => att[m.name] > 0).length;
-    const sec = document.createElement('section'); sec.className = 'team'; sec.dataset.team = t.id; sec.style.setProperty('--tc', teamColor(t.name));
+    const sec = document.createElement('section'); sec.className = 'team' + (fadeTeams ? ' fadein' : ''); sec.dataset.team = t.id; sec.style.setProperty('--tc', teamColor(t.name));
     const head = document.createElement('div'); head.className = 'team-head';
     const h = document.createElement('h3'); h.textContent = t.name;
     const cnt = document.createElement('span'); cnt.className = 'team-count';
@@ -537,6 +557,7 @@ function renderChips() {
     sec.append(h, chips); box.appendChild(sec);
   }
   setRoll($('summary'), state.loading ? 'Yükleniyor…' : summarySegs(label), false);
+  updateDayHideNote();
 }
 function renderNote() {
   const ta = $('note');
@@ -757,6 +778,80 @@ $('chips').addEventListener('pointermove', (e) => {
 });
 ['pointerup', 'pointercancel', 'pointerleave'].forEach((ev) => $('chips').addEventListener(ev, () => { if (press.timer) pressEnd(); else if (press.el) pressEnd(); }));
 $('chips').addEventListener('contextmenu', (e) => { if (e.target.closest('.chip')) e.preventDefault(); });
+// ---- 3.5: ekip şeridine basılı tut → "Bugünlük gizle" ----
+let dayPop = null;
+const dpress = { timer: null, x: 0, y: 0, sec: null };
+const dpEnd = () => { clearTimeout(dpress.timer); dpress.timer = null; dpress.sec = null; };
+function closeDayPop(instant) {
+  const p = dayPop; if (!p) return; dayPop = null;
+  document.removeEventListener('click', p.onClick, true); document.removeEventListener('pointerdown', p.onDown, true);
+  $('scroller').removeEventListener('scroll', p.onScroll);
+  if (instant || reduceMotion.matches) { p.el.remove(); return; }
+  p.el.classList.add('out'); setTimeout(() => p.el.remove(), 200);
+}
+function openDayPop(sec) {
+  const t = state.teams.find((q) => q.id === sec.dataset.team); if (!t) return;
+  closeDayPop(true);
+  const att = state.day.attendance;
+  const n = isCountTeam(t) ? countOf(t) : teamMembers(t.id).filter((m) => att[m.name] > 0).length;
+  const el = document.createElement('div'); el.className = 'daypop'; el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', t.name + ' ekibini bugünlük gizle');
+  if (n > 0) { const w = document.createElement('p'); w.className = 'daypop-warn'; w.textContent = `Bu ekipte bugün ${n} kişi işaretli.`; el.appendChild(w); }
+  const row = document.createElement('div'); row.className = 'daypop-btns';
+  const hide = document.createElement('button'); hide.type = 'button'; hide.className = 'btn small danger'; hide.dataset.dphide = t.id; hide.textContent = 'Bugünlük gizle';
+  const no = document.createElement('button'); no.type = 'button'; no.className = 'btn small ghost'; no.dataset.dpcancel = '1'; no.textContent = 'İptal';
+  row.append(hide, no); el.appendChild(row);
+  const head = sec.querySelector('.team-head'), r = head.getBoundingClientRect();
+  el.style.top = Math.round(r.bottom + 6) + 'px';
+  el.style.left = Math.round(Math.max(8, Math.min(r.left + 8, innerWidth - 8 - Math.min(300, innerWidth - 16)))) + 'px';
+  document.body.appendChild(el);
+  const p = { el, skip: true, team: t.id };
+  p.onClick = (e) => { if (p.skip) { p.skip = false; return; } if (!el.contains(e.target)) { e.stopPropagation(); e.preventDefault(); closeDayPop(); } };
+  p.onDown = () => { p.skip = false; };
+  p.onScroll = () => closeDayPop(true);
+  document.addEventListener('click', p.onClick, true); document.addEventListener('pointerdown', p.onDown, true);
+  $('scroller').addEventListener('scroll', p.onScroll, { passive: true });
+  dayPop = p;
+  el.addEventListener('click', (e) => {
+    const b = e.target.closest('button'); if (!b) return;
+    if (b.dataset.dpcancel) closeDayPop(); else if (b.dataset.dphide) { closeDayPop(); hideTeamToday(b.dataset.dphide); }
+  });
+}
+async function hideTeamToday(id) {
+  const t = state.teams.find((q) => q.id === id), sec = $('chips').querySelector(`section.team[data-team="${id}"]`); if (!t) return;
+  if (sec && sec.contains(document.activeElement)) document.activeElement.blur();
+  setDayHidden(t, true);
+  if (sec && !reduceMotion.matches && sec.animate) {
+    const h = sec.offsetHeight; sec.style.overflow = 'hidden'; sec.style.pointerEvents = 'none';
+    const a = sec.animate([{ height: h + 'px', opacity: 1, transform: 'scale(1)' }, { height: '0px', opacity: 0, transform: 'scale(.97)', marginTop: '0px', marginBottom: '0px', paddingTop: '0px', paddingBottom: '0px' }], { duration: 420, easing: 'cubic-bezier(.22,.9,.24,1)', fill: 'forwards' });
+    try { await a.finished; } catch { /* yoksay */ }
+  }
+  if (sec) sec.remove();
+  updateDayHideNote();
+}
+function updateDayHideNote() {
+  const el = $('dayHideNote'); if (!el) return;
+  const n = state.site ? dayHideList().filter((nm) => state.teams.some((t) => lcTr(t.name) === lcTr(nm))).length : 0;
+  el.hidden = n === 0;
+  if (n) { el.textContent = ''; el.append(`${n} ekip bugün gizli · `); const b = document.createElement('button'); b.type = 'button'; b.className = 'linkbtn'; b.id = 'dayShow'; b.textContent = 'Göster'; el.appendChild(b); }
+}
+$('dayHideNote').addEventListener('click', (e) => {
+  if (!e.target.closest('#dayShow')) return;
+  const o = readDayHide(); delete o[dhKey()]; ls.set(DAYHIDE_KEY, o);
+  renderChips(true);
+});
+$('chips').addEventListener('pointerdown', (e) => {
+  const head = e.target.closest('.team-head'); if (!head || e.target.closest('button,input,a') || (e.pointerType === 'mouse' && e.button !== 0)) return;
+  dpEnd(); dpress.x = e.clientX; dpress.y = e.clientY; dpress.sec = head.closest('section.team');
+  const sec = dpress.sec;
+  dpress.timer = setTimeout(() => {
+    dpress.timer = null; dpress.sec = null;
+    try { navigator.vibrate?.(15); } catch { /* yoksay */ }
+    swipe.cancel = true; openDayPop(sec);
+  }, 500);
+});
+$('chips').addEventListener('pointermove', (e) => { if (dpress.timer && Math.hypot(e.clientX - dpress.x, e.clientY - dpress.y) > 10) dpEnd(); });
+['pointerup', 'pointercancel', 'pointerleave'].forEach((ev) => $('chips').addEventListener(ev, () => { if (dpress.timer) dpEnd(); }));
+$('chips').addEventListener('contextmenu', (e) => { if (e.target.closest('.team-head')) e.preventDefault(); });
 $('chips').addEventListener('click', async (e) => {
   const t = e.target.closest('button'); if (!t) return;
   const att = state.day.attendance;
@@ -779,7 +874,7 @@ $('chips').addEventListener('click', async (e) => {
     toggleTeam(t.closest('section.team'));
   } else if (t.dataset.all) {
     const mem = state.members.filter((m) => m.teamId === t.dataset.all);
-    const tm = state.teams.find((q) => q.id === t.dataset.all); if (tm && isSiteHidden(tm)) return;
+    const tm = state.teams.find((q) => q.id === t.dataset.all); if (tm && (isSiteHidden(tm) || isDayHidden(tm))) return;
     const todo = mem.map((m) => [m.name, limitedTarget(m.name, 1)]).filter(([n, tg]) => tg > 0 && (att[n] || 0) < tg);
     if (!todo.length) return;
     const changed = todo.map(([n]) => n);
@@ -1204,11 +1299,11 @@ $('copyYesterday').addEventListener('click', async () => {
     if (!(v > 0) || att[n] > 0) continue; // bugün işaretli olanlar değişmez
     if (isCountKey(n)) { // sayıyla tutulan ekip: sayı da kopyalanır
       const ct = state.teams.find((q) => lcTr(q.name) === lcTr(countKeyTeam(n)));
-      if (ct && (isSiteHidden(ct) || !isCountTeam(ct))) continue;
+      if (ct && (isSiteHidden(ct) || isDayHidden(ct) || !isCountTeam(ct))) continue;
       att[n] = Math.min(COUNT_MAX, Math.round(v)); counts++; changed.push(n); continue;
     }
     const pm = state.members.find((m) => m.name === n), pt = pm && state.teams.find((q) => q.id === pm.teamId);
-    if (pt && isSiteHidden(pt)) continue; // bu şantiyede gizli ekip
+    if (pt && (isSiteHidden(pt) || isDayHidden(pt))) continue; // bu şantiyede / bugün gizli ekip
     const t = limitedTarget(n, v); if (t <= 0) continue;
     att[n] = t; count++; changed.push(n);
     if (!hasName(n)) { addMember(n, ensureEkipsiz().id); added = true; }
@@ -1249,7 +1344,7 @@ function swipeCommit(dir) {
 {
   const sc = $('scroller');
   sc.addEventListener('touchstart', (e) => {
-    swipe.on = e.touches.length === 1 && !e.target.closest('input,textarea,select,[contenteditable],label.datelabel') && !!state.site;
+    swipe.on = e.touches.length === 1 && !dayPop && !e.target.closest('input,textarea,select,[contenteditable],label.datelabel') && !!state.site;
     swipe.cancel = false; swipe.mode = ''; swipe.dx = 0;
     swipe.x = swipe.lx = e.touches[0].clientX; swipe.y = e.touches[0].clientY; swipe.lt = performance.now(); swipe.vx = 0;
   }, { passive: true });
@@ -1950,7 +2045,7 @@ function reconcileChips() {
     if (b.closest('.hiddengrp,.orphangrp') && !(v > 0)) return false;
     if (cur !== v || blk !== b.classList.contains('blocked')) todo.push([b, v, blk]);
   }
-  for (const n of Object.keys(att)) if (att[n] > 0 && !seen.has(n) && !isCountKey(n)) return false;
+  for (const n of Object.keys(att)) if (att[n] > 0 && !seen.has(n) && !isCountKey(n) && !dayHiddenName(n)) return false;
   for (const [b, v, blk] of todo) {
     if (blk !== b.classList.contains('blocked')) {
       b.classList.toggle('blocked', blk);
