@@ -526,3 +526,6 @@ html[data-site] .card{background:#FFFFFF!important;box-shadow:0 2px 10px rgba(60
 html[data-site] .tset,html[data-site] .connbox{background:#FFFFFF!important}
 /* 3.7.1: Köseilyas paleti (Color Hunt): #EBEBD8 #637545 #455230 #9BA685 */
 html[data-site="koseilyas"]{--site-bg:#EBEBD8;--site-l1:#D9DDC3;--site-l2:#C3CBA9;--site-acc:#637545;--site-deep:#455230;--site-edge:#B5BE9B;--site-card:#FFFFFF}
+/* 3.7.2: Gündoğdu paleti (Color Hunt): #131B2B #2F4A63 #5B91A3 #CFEAE0 */
+html[data-site="gundogdu"]{--site-bg:#CFEAE0;--site-l1:#B8DBD6;--site-l2:#A3C8D1;--site-acc:#5B91A3;--site-deep:#2F4A63;--site-edge:#8DB2BD;--site-card:#FFFFFF}
+html[data-site="gundogdu"] .card h2{color:#2F4A63!important}
