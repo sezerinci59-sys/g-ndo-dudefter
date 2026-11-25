@@ -423,3 +423,9 @@ html{background:#1f5fae}
 .seg-group .seg:first-child{border-radius:4px 0 0 4px}
 .seg-group .seg:last-child{border-radius:0 4px 4px 0;border-left:0}
 .seg.on{background:linear-gradient(#cfe6fb,#9cc4ee);font-weight:700;border-color:#0b4fb8}
+
+/* 3.2.1: bildirim kutusu yeri hep ayrılı; çıkınca/gidince sayfa kaymaz */
+#syncBar[hidden]{display:block!important;visibility:hidden;pointer-events:none}
+#syncError[hidden]{display:block!important;visibility:hidden}
+#syncError{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-height:1.3em;padding-bottom:2px}
+#syncError{height:20px;line-height:20px;min-height:0;padding-bottom:4px;box-sizing:content-box}
