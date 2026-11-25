@@ -529,3 +529,4 @@ html[data-site="koseilyas"]{--site-bg:#EBEBD8;--site-l1:#D9DDC3;--site-l2:#C3CBA
 /* 3.7.2: Gündoğdu paleti (Color Hunt): #131B2B #2F4A63 #5B91A3 #CFEAE0 */
 html[data-site="gundogdu"]{--site-bg:#CFEAE0;--site-l1:#B8DBD6;--site-l2:#A3C8D1;--site-acc:#5B91A3;--site-deep:#2F4A63;--site-edge:#8DB2BD;--site-card:#FFFFFF}
 html[data-site="gundogdu"] .card h2{color:#2F4A63!important}
+.apptitle{position:relative;top:8px}
