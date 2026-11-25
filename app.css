@@ -98,12 +98,13 @@ textarea{resize:vertical;min-height:110px}
 .chips{display:flex;flex-wrap:wrap;gap:8px}
 .chip{min-height:46px;padding:6px 12px;border-radius:9px;border:1px solid #b4b8bd;background:linear-gradient(#fff,#f3f4f6);display:inline-flex;
   align-items:center;gap:8px;cursor:pointer;user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;touch-action:manipulation;
-  position:relative;overflow:hidden;transition:transform 120ms cubic-bezier(.4,0,1,1);font-size:15px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.9),0 1px 2px rgba(0,0,0,.12)}
+  position:relative;overflow:hidden;transition:transform var(--d-xs) var(--ease-in);font-size:15px;box-shadow:inset 0 0 0 1px rgba(255,255,255,.9),0 1px 2px rgba(0,0,0,.12)}
 .chip.pressing{transform:scale(.94);will-change:transform}
 /* Basılı tutma ilerlemesi: yalnızca transform (scaleX 0→1, 450 ms = yarım gün süresi) */
 .chip::after{content:"";position:absolute;inset:0;background:rgba(0,0,0,.2);transform:scaleX(0);transform-origin:left center;pointer-events:none}
+/* süre = yarım gün basılı tutma eşiği (işlev, hız ayarından etkilenmez) */
 .chip.pressing::after{transform:scaleX(1);transition:transform 450ms linear}
-.chip.pop,.stepnum.pop{animation:chipPop 280ms cubic-bezier(.2,.8,.2,1) both;will-change:transform}
+.chip.pop,.stepnum.pop{animation:chipPop var(--d-s) var(--ease-out) both;will-change:transform}
 @keyframes chipPop{0%{transform:scale(1)}40%{transform:scale(1.1)}100%{transform:scale(1)}}
 .chip small{font-size:12px;font-weight:700}
 .chip.full{background:linear-gradient(180deg,rgba(255,255,255,.45) 0,rgba(255,255,255,.1) 49%,rgba(0,0,0,0) 50%),linear-gradient(#49a64b,#2f8a2f 55%,#237024);border-color:#1a5a1c;color:#fff;text-shadow:0 1px 1px rgba(0,0,0,.45);box-shadow:inset 0 0 0 1px rgba(255,255,255,.3),0 1px 3px rgba(0,0,0,.25)}
@@ -168,7 +169,7 @@ textarea{resize:vertical;min-height:110px}
 .psel{position:absolute;top:0;left:0;width:44px;height:44px;border:0;padding:0;color:#fff;font-size:22px;line-height:1;cursor:pointer;z-index:2;
   background:radial-gradient(circle at 50% 50%,rgba(0,0,0,.65) 0 13px,transparent 14px);-webkit-tap-highlight-color:transparent}
 .psel.on{color:#f5b800}
-.psel.pop{animation:selPop 260ms var(--ease-over)}
+.psel.pop{animation:selPop var(--d-s) var(--ease-over)}
 .photo.sel{border:3px solid #f5b800}
 @keyframes selPop{0%{transform:scale(.6)}55%{transform:scale(1.35)}100%{transform:scale(1)}}
 /* Fotoğraf silme */
@@ -268,13 +269,27 @@ body::before{content:"";position:fixed;inset:0;z-index:-1;background:linear-grad
 #chips .chip small{display:none}
 
 /* ===== 2.7 Akıcılık: yalnızca transform/opacity animasyonları ===== */
-:root{--ease-in:cubic-bezier(.2,.8,.2,1);--ease-out:cubic-bezier(.4,0,1,1);--ease-nav:cubic-bezier(.22,.9,.24,1);--ease-over:cubic-bezier(.34,1.2,.5,1)}
+:root{
+  /* 3.4 Hareket belirteçleri: tüm süreler --mf (animasyon hızı: Hızlı .7 / Normal 1 / Yavaş 1.4) ile çarpılır */
+  --mf:1.4;
+  --d-xs:calc(140ms * var(--mf));   /* düğme basma */
+  --d-s:calc(360ms * var(--mf));    /* çip belirme, sayı kayması */
+  --d-m:calc(420ms * var(--mf));    /* bildirim, bilgi çubuğu, fotoğraf */
+  --d-l:calc(480ms * var(--mf));    /* liste kapanma, sekme göstergesi */
+  --d-sheet:calc(560ms * var(--mf));      /* alttan sayfa: açılış */
+  --d-sheet-out:calc(420ms * var(--mf));  /* alttan sayfa: kapanış */
+  --d-page:calc(600ms * var(--mf));       /* sayfa geçişi: giriş */
+  --d-page-out:calc(450ms * var(--mf));   /* sayfa geçişi: çıkış (girişin ~%75'i) */
+  --ease-out:cubic-bezier(.22,1,.36,1);   /* hızlı başla, yumuşak otur */
+  --ease-in:cubic-bezier(.4,0,1,1);
+  --ease-inout:cubic-bezier(.65,0,.35,1);
+  --ease-over:cubic-bezier(.34,1.2,.5,1)}
 button,input,select,textarea,label,summary,.chip{touch-action:manipulation}
 .overlay,.sheet.scroll,.camov{overscroll-behavior-y:contain}
 .card:has(#note),.card:has(#photoGrid){content-visibility:auto;contain-intrinsic-size:auto 260px}
 
 /* Düğmeler: basılı durum */
-.btn,.icon-btn,.tabs button,.pill,.xclose,.shutter,.cam-done,.big{transition:transform 90ms var(--ease-out)}
+.btn,.icon-btn,.tabs button,.pill,.xclose,.shutter,.cam-done,.big{transition:transform var(--d-xs) var(--ease-in)}
 .btn:active,.icon-btn:active,.tabs button:active,.pill:active,.xclose:active,.shutter:active,.cam-done:active,.big:active{transform:scale(.97)}
 .btn:disabled:active{transform:none}
 
@@ -282,43 +297,67 @@ button,input,select,textarea,label,summary,.chip{touch-action:manipulation}
 .tabs{--tpl:calc(8px + env(safe-area-inset-left));--tpr:calc(8px + env(safe-area-inset-right));position:fixed}
 .tab-ind{position:absolute;top:5px;left:var(--tpl);height:46px;width:calc((100% - var(--tpl) - var(--tpr) - 6px) / 2);border-radius:6px;pointer-events:none;
   background:linear-gradient(#fff 0,#e8f4ff 49%,#cfe6fb 50%,#eaf5ff 100%);border:2px solid #0b4fb8;box-shadow:0 0 0 2px #ffd34d,inset 0 0 0 1px #fff;opacity:0}
-.tabs.ready .tab-ind{opacity:1;transition:transform 300ms var(--ease-over)}
+.tabs.ready .tab-ind{opacity:1;transition:transform var(--d-m) var(--ease-over)}
 .tabs[data-pos="1"] .tab-ind{transform:translateX(calc(100% + 6px))}
 .tabs button{position:relative;z-index:1}
 .tabs.ready button.active{background:transparent;border-color:transparent;box-shadow:none}
 
 /* Sayfa geçişleri */
-main.pg-up .card{animation:pgUp 320ms var(--ease-nav) both;will-change:transform,opacity}
-main.pg-next .card{animation:pgNext 340ms var(--ease-nav) both;will-change:transform,opacity}
-main.pg-prev .card{animation:pgPrev 340ms var(--ease-nav) both;will-change:transform,opacity}
-@keyframes pgUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:none}}
-@keyframes pgNext{from{opacity:0;transform:translateX(48px)}to{opacity:1;transform:none}}
-@keyframes pgPrev{from{opacity:0;transform:translateX(-48px)}to{opacity:1;transform:none}}
+/* (View Transitions yoksa ya da kaydırma sonrası kullanılan yedek) */
+main.pg-up .card{animation:pgUp var(--d-page) var(--ease-out) both;will-change:transform,opacity}
+main.pg-next .card{animation:pgNext var(--d-page) var(--ease-out) both;will-change:transform,opacity}
+main.pg-prev .card{animation:pgPrev var(--d-page) var(--ease-out) both;will-change:transform,opacity}
+@keyframes pgUp{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
+@keyframes pgNext{from{opacity:0;transform:translateX(40px)}to{opacity:1;transform:none}}
+@keyframes pgPrev{from{opacity:0;transform:translateX(-40px)}to{opacity:1;transform:none}}
+
+/* 3.4 View Transitions: yalnızca #scroller ("page") geçer; başlık, alt sekmeler ve (sayfa en üstteyken) tarih çubuğu sabit kalır.
+   Ad yalnızca geçiş sürerken verilir (html[data-vt]); aksi halde ek katman oluşmaz. */
+html[data-vt] #scroller{view-transition-name:page}
+html.vt-bar[data-vt] .datebar{view-transition-name:datebar}
+::view-transition{pointer-events:none}
+::view-transition-old(root),::view-transition-new(root){animation:none;mix-blend-mode:normal}
+::view-transition-old(root),::view-transition-old(datebar){display:none}
+::view-transition-new(datebar){animation:none;mix-blend-mode:normal}
+::view-transition-group(page),::view-transition-group(datebar){animation-duration:0s}
+::view-transition-old(page),::view-transition-new(page){mix-blend-mode:normal;animation-fill-mode:both}
+html[data-vt="next"]::view-transition-old(page){animation:vtOutL var(--d-page-out) var(--ease-in) both}
+html[data-vt="next"]::view-transition-new(page){animation:vtInR var(--d-page) var(--ease-out) both}
+html[data-vt="prev"]::view-transition-old(page){animation:vtOutR var(--d-page-out) var(--ease-in) both}
+html[data-vt="prev"]::view-transition-new(page){animation:vtInL var(--d-page) var(--ease-out) both}
+html[data-vt="site"]::view-transition-old(page){animation:vtFadeOut var(--d-page-out) var(--ease-in) both}
+html[data-vt="site"]::view-transition-new(page){animation:vtRise var(--d-page) var(--ease-out) both}
+@keyframes vtOutL{to{opacity:0;transform:translateX(-40px)}}
+@keyframes vtOutR{to{opacity:0;transform:translateX(40px)}}
+@keyframes vtInR{from{opacity:0;transform:translateX(40px)}to{opacity:1;transform:none}}
+@keyframes vtInL{from{opacity:0;transform:translateX(-40px)}to{opacity:1;transform:none}}
+@keyframes vtFadeOut{to{opacity:0}}
+@keyframes vtRise{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
 
 /* Ayarlar: alttan kayar */
-#settings.sheet-in{animation:sheetIn 380ms var(--ease-over);will-change:transform}
-#settings.leaving{animation:sheetOut 260ms var(--ease-out) forwards;will-change:transform;pointer-events:none}
+#settings.sheet-in{animation:sheetIn var(--d-sheet) var(--ease-out);will-change:transform}
+#settings.leaving{animation:sheetOut var(--d-sheet-out) var(--ease-in) forwards;will-change:transform;pointer-events:none}
 @keyframes sheetIn{from{transform:translateY(100%)}to{transform:none}}
 @keyframes sheetOut{from{transform:none}to{transform:translateY(100%)}}
 /* Kamera */
-#cam.in{animation:fadeIn 160ms var(--ease-in);will-change:opacity}
+#cam.in{animation:fadeIn var(--d-s) var(--ease-out);will-change:opacity}
 @keyframes fadeIn{from{opacity:0}to{opacity:1}}
 
 /* Bildirim (toast): translateX(-50%) ortalamayı korur */
-.toast.in{animation:toastIn 300ms var(--ease-in);will-change:transform,opacity}
-.toast.leaving{animation:toastOut 220ms var(--ease-out) forwards;will-change:opacity;pointer-events:none}
+.toast.in{animation:toastIn var(--d-m) var(--ease-out);will-change:transform,opacity}
+.toast.leaving{animation:toastOut calc(var(--d-m) * .75) var(--ease-in) forwards;will-change:opacity;pointer-events:none}
 @keyframes toastIn{from{opacity:0;transform:translateX(-50%) translateY(28px)}to{opacity:1;transform:translateX(-50%)}}
 @keyframes toastOut{from{opacity:1;transform:translateX(-50%)}to{opacity:0;transform:translateX(-50%)}}
 
 /* Bilgi balonu */
-.syncbar.in{animation:barIn 200ms var(--ease-in);will-change:transform,opacity}
+.syncbar.in{animation:barIn var(--d-m) var(--ease-out);will-change:transform,opacity}
 @keyframes barIn{from{opacity:0;transform:translateY(-10px)}to{opacity:1;transform:none}}
 
 /* Fotoğraf küçük resimleri */
-.photo.pin{animation:fadeIn 300ms var(--ease-in);will-change:opacity}
-.photo.pin img{animation:photoIn 300ms var(--ease-in);will-change:transform}
-.photo.pout{animation:fadeOut 160ms var(--ease-out) forwards;will-change:opacity;pointer-events:none}
-.photo.pout img{animation:photoOut 160ms var(--ease-out) forwards;will-change:transform}
+.photo.pin{animation:fadeIn var(--d-m) var(--ease-out);will-change:opacity}
+.photo.pin img{animation:photoIn var(--d-m) var(--ease-out);will-change:transform}
+.photo.pout{animation:fadeOut calc(var(--d-m) * .75) var(--ease-in) forwards;will-change:opacity;pointer-events:none}
+.photo.pout img{animation:photoOut calc(var(--d-m) * .75) var(--ease-in) forwards;will-change:transform}
 @keyframes photoIn{from{transform:scale(.85)}to{transform:none}}
 @keyframes photoOut{from{transform:none}to{transform:scale(.94)}}
 @keyframes fadeOut{from{opacity:1}to{opacity:0}}
@@ -345,45 +384,45 @@ main{overflow-x:clip}
 #scroller{touch-action:pan-y}
 /* Basma dalgası */
 .rip-host{overflow:hidden}
-.ripple{position:absolute;border-radius:50%;background:currentColor;opacity:0;transform:scale(0);pointer-events:none;animation:ripple 420ms cubic-bezier(.2,.6,.3,1) forwards;will-change:transform,opacity}
+.ripple{position:absolute;border-radius:50%;background:currentColor;opacity:0;transform:scale(0);pointer-events:none;animation:ripple var(--d-m) var(--ease-out) forwards;will-change:transform,opacity}
 @keyframes ripple{from{transform:scale(0);opacity:.35}to{transform:scale(1);opacity:0}}
 /* Sayı kayması */
 .num{display:inline-block;position:relative}
-.num.roll{animation:numIn 220ms var(--ease-in)}
-.num.roll::before{content:attr(data-old);position:absolute;left:0;top:0;animation:numOut 220ms var(--ease-in) forwards}
+.num.roll{animation:numIn var(--d-s) var(--ease-out)}
+.num.roll::before{content:attr(data-old);position:absolute;left:0;top:0;animation:numOut var(--d-s) var(--ease-out) forwards}
 @keyframes numIn{from{opacity:0;transform:translateY(60%)}to{opacity:1;transform:none}}
 @keyframes numOut{from{opacity:1;transform:none}to{opacity:0;transform:translateY(-60%)}}
 /* Açılışta kartlar sırayla */
-main.boot .card{animation:cardIn 360ms var(--ease-nav) both;will-change:transform,opacity}
-main.boot .card:nth-of-type(2){animation-delay:70ms}
-main.boot .card:nth-of-type(3){animation-delay:140ms}
-main.boot .card:nth-of-type(4){animation-delay:210ms}
-main.boot .card:nth-of-type(n+5){animation-delay:280ms}
+main.boot .card{animation:cardIn var(--d-page) var(--ease-out) both;will-change:transform,opacity}
+main.boot .card:nth-of-type(2){animation-delay:calc(70ms * var(--mf))}
+main.boot .card:nth-of-type(3){animation-delay:calc(140ms * var(--mf))}
+main.boot .card:nth-of-type(4){animation-delay:calc(210ms * var(--mf))}
+main.boot .card:nth-of-type(n+5){animation-delay:calc(280ms * var(--mf))}
 @keyframes cardIn{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
 /* Gönderim çubuğu: parıltı ve ✔ */
 .syncbar{position:relative;overflow:hidden}
 .syncbar.syncing::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(100deg,transparent 30%,rgba(255,255,255,.7) 50%,transparent 70%);transform:translateX(-100%);animation:shimmer 1.2s linear infinite;will-change:transform}
 @keyframes shimmer{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
 .sync-ok{display:none;color:#2f8a2f;font-weight:700}
-.syncbar.done .sync-ok{display:inline-block;animation:okPop 360ms var(--ease-in) both}
+.syncbar.done .sync-ok{display:inline-block;animation:okPop var(--d-s) var(--ease-out) both}
 @keyframes okPop{0%{transform:scale(.4);opacity:0}60%{transform:scale(1.15);opacity:1}100%{transform:scale(1);opacity:1}}
 /* Bekleyen fotoğraf etiketi */
 .photo.pending > span:not(.irs){animation:tagPulse 1.6s ease-in-out infinite;will-change:opacity}
 @keyframes tagPulse{0%,100%{opacity:1}50%{opacity:.55}}
-.photo.flip > span:not(.irs){animation:fadeIn 300ms var(--ease-in)}
+.photo.flip > span:not(.irs){animation:fadeIn var(--d-m) var(--ease-out)}
 
 /* ===== 2.9.2: ekip listesini kapatma ===== */
 .team-act{display:flex;align-items:center;gap:8px;justify-self:end}
 .team-head .btn.tgl{width:44px;min-width:44px;padding:0;display:inline-flex;align-items:center;justify-content:center}
-.tgl svg{transition:transform 300ms var(--ease-nav);will-change:transform}
+.tgl svg{transition:transform var(--d-l) var(--ease-out);will-change:transform}
 .team.collapsed .tgl svg{transform:rotate(180deg)}
-.tbody{display:grid;grid-template-rows:1fr;transition:grid-template-rows 320ms var(--ease-nav)}
+.tbody{display:grid;grid-template-rows:1fr;transition:grid-template-rows var(--d-l) var(--ease-out)}
 .team.collapsed .tbody{grid-template-rows:0fr}
-.tbody-in{min-height:0;overflow:hidden;transition:opacity 320ms var(--ease-nav),transform 320ms var(--ease-nav)}
+.tbody-in{min-height:0;overflow:hidden;transition:opacity var(--d-l) var(--ease-out),transform var(--d-l) var(--ease-out)}
 .team.collapsed .tbody-in{opacity:0;transform:translateY(-8px)}
 .team-head [data-all]:disabled{opacity:.45}
 .tbody-in>.chips{padding-top:4px}
-.team{transition:padding-bottom 320ms var(--ease-nav)}
+.team{transition:padding-bottom var(--d-l) var(--ease-out)}
 .team.collapsed{padding-bottom:0}
 .team.collapsed .tbody{margin:0}
 
@@ -433,15 +472,15 @@ html{background:#1f5fae}
 /* 3.2.2: boş bildirim yerinde soluk "Tümü gönderildi" */
 .syncslot{position:relative}
 .syncdone{position:absolute;left:0;right:0;top:0;height:calc(100% - 10px);display:flex;align-items:center;justify-content:center;
-  color:#5a6b5a;font-size:14px;opacity:0;transition:opacity 300ms ease;pointer-events:none}
+  color:#5a6b5a;font-size:14px;opacity:0;transition:opacity var(--d-m) var(--ease-out);pointer-events:none}
 .syncslot:has(#syncBar[hidden]) .syncdone{opacity:.6}
 
 /* 3.3: şantiyeye göre zemin rengi */
 :root{--site-bg:#eef1f6;--site-acc:#ffd34d}
 html[data-site="gundogdu"]{--site-bg:#FBF1E4;--site-acc:#E8A25A}
 html[data-site="koseilyas"]{--site-bg:#E8F1EA;--site-acc:#5FA578}
-body,body::before{background:var(--site-bg)!important;transition:background-color 400ms ease}
-.overlay,.sheet{background:var(--site-bg)!important;transition:background-color 400ms ease}
+body,body::before{background:var(--site-bg)!important;transition:background-color var(--d-m) var(--ease-out)}
+.overlay,.sheet{background:var(--site-bg)!important;transition:background-color var(--d-m) var(--ease-out)}
 .top{box-shadow:0 4px 0 var(--site-acc),0 6px 8px rgba(0,30,80,.25)!important}
-.tab-ind{box-shadow:0 0 0 2px var(--site-acc),inset 0 0 0 1px #fff!important;transition:transform 300ms var(--ease-over),box-shadow 400ms ease}
+.tab-ind{box-shadow:0 0 0 2px var(--site-acc),inset 0 0 0 1px #fff!important;transition:transform var(--d-m) var(--ease-over),box-shadow var(--d-m) var(--ease-out)}
 .tabs.ready button.active{color:#0b3d7a}

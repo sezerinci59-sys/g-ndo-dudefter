@@ -1,5 +1,6 @@
 // Sürüm notları — her güncellemede en üste yeni satır eklenir.
 export const SURUMLER = [
+  { v: '3.4', t: '25.11.2026', n: ['Geçişler daha yavaş ve yumuşak (gün/şantiye değişimi iPhone\'un kendi geçiş özelliğiyle).', 'Ayarlar > Animasyon hızı: Hızlı / Normal / Yavaş (varsayılan Yavaş).'] },
   { v: '3.3', t: '25.11.2026', n: ['Şantiyeye göre zemin rengi: Gündoğdu açık şeftali, Köseilyas açık adaçayı yeşili (Ayarlar dahil). Başlık altında ve seçili sekmede şantiye rengi.'] },
   { v: '3.2.2', t: '25.11.2026', n: ['Bildirim yokken o alanda soluk "✔ Tümü gönderildi" yazar.'] },
   { v: '3.2.1', t: '25.11.2026', n: ['Bildirim kutusunun yeri hep ayrılı; bildirim çıkınca sayfa aşağı kaymaz.'] },

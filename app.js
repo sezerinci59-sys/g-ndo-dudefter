@@ -106,6 +106,29 @@ let photoUrls = [];
 // ---------- Animasyon yardımcıları (yalnızca transform/opacity; will-change sadece animasyon sırasında) ----------
 const reduceMotion = window.matchMedia ? window.matchMedia('(prefers-reduced-motion: reduce)') : { matches: false };
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+// 3.4 Hareket: süreler CSS'teki --mf (animasyon hızı) ile çarpılır; taban değerler app.css :root ile aynıdır.
+const MOTION_DEFAULT = 1.4;
+const motionFactor = () => { const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--mf')); return v > 0 ? v : MOTION_DEFAULT; };
+const dur = (baseMs) => Math.round(baseMs * motionFactor());
+const readMotion = () => { const v = Number(ls.get('sd_motion', MOTION_DEFAULT)); return v >= 0.02 && v <= 4 ? v : MOTION_DEFAULT; }; // 0.1 gibi küçük değerler testler içindir
+function applyMotion(v = readMotion()) { document.documentElement.style.setProperty('--mf', String(v)); }
+applyMotion();
+const cssEase = (name, d) => getComputedStyle(document.documentElement).getPropertyValue(name).trim() || d;
+// Sayfa geçişi: yalnızca #scroller ("page") geçer; başlık, alt sekmeler ve tarih çubuğu sabit kalır.
+const canVT = () => typeof document.startViewTransition === 'function' && !reduceMotion.matches;
+let vtSeq = 0;
+async function pageTransition(kind, update, { noVT = false } = {}) {
+  if (noVT || !canVT()) return null;
+  const root = document.documentElement, seq = ++vtSeq;
+  root.dataset.vt = kind;
+  root.classList.toggle('vt-bar', kind !== 'site' && $('scroller').scrollTop < 2);
+  const cleanup = () => { if (seq === vtSeq) { delete root.dataset.vt; root.classList.remove('vt-bar'); } };
+  let vt;
+  try { vt = document.startViewTransition(update); } catch { cleanup(); return null; }
+  vt.finished.then(cleanup, cleanup);
+  try { await vt.updateCallbackDone; } catch (e) { cleanup(); throw e; }
+  return vt;
+}
 // cls sınıfı animasyon süresince takılı kalır (CSS içinde will-change verir), bitince kalkar.
 function playClass(el, cls, ms) {
   if (!el || reduceMotion.matches) return;
@@ -127,8 +150,8 @@ function hideAnim(el, ms) {
 }
 function toast(msg, ms = 2800) {
   const t = $('toast'); t.textContent = msg;
-  if (t.hidden || t.classList.contains('leaving')) showAnim(t, 'in', 300);
-  clearTimeout(toast._t); toast._t = setTimeout(() => hideAnim(t, 220), ms);
+  if (t.hidden || t.classList.contains('leaving')) showAnim(t, 'in', dur(420));
+  clearTimeout(toast._t); toast._t = setTimeout(() => hideAnim(t, dur(315)), ms);
 }
 
 // ---------- Gün verisi ----------
@@ -328,9 +351,9 @@ function setChipState(b, v) {
 }
 function popChip(b, i = 0) {
   if (reduceMotion.matches) return;
-  const d = i ? Math.min(i * 35, 600 - 280) : 0; // toplam en çok ~600 ms
+  const d = i ? Math.round(Math.min(i * 35, 320) * motionFactor()) : 0; // gecikme en çok ~320 ms × hız
   b.style.animationDelay = d ? d + 'ms' : '';
-  playClass(b, 'pop', 280 + d);
+  playClass(b, 'pop', dur(360) + d);
 }
 // Ekip listesini kapatma: gün + şantiye + ekip başına (localStorage), 14 günden eski kayıtlar silinir. Yeni gün hep açık başlar.
 const COLL_KEY = 'sd_collapsed';
@@ -379,7 +402,7 @@ function setRoll(el, segs, animate) {
     if (animate && !reduceMotion.matches) {
       n.dataset.old = old; clearTimeout(n._rt);
       n.classList.remove('roll'); void n.offsetWidth; n.classList.add('roll');
-      n._rt = setTimeout(() => { n.classList.remove('roll'); delete n.dataset.old; }, 260);
+      n._rt = setTimeout(() => { n.classList.remove('roll'); delete n.dataset.old; }, dur(360) + 40);
     }
   });
   el._rs = segs.slice();
@@ -554,8 +577,8 @@ async function renderPhotos() {
     const isNew = !fresh && !photoSeen.has(p.id) && !reduceMotion.matches; photoSeen.add(p.id);
     const flip = !reduceMotion.matches && photoStat.get(p.id) === 'pending' && p.status === 'sent'; photoStat.set(p.id, p.status === 'sent' ? 'sent' : 'pending');
     const div = document.createElement('div'); div.className = 'photo ' + (p.status === 'sent' ? 'sent' : 'pending') + (isNew ? ' pin' : '') + (flip ? ' flip' : '');
-    if (flip) setTimeout(() => div.classList.remove('flip'), 400);
-    if (isNew) setTimeout(() => div.classList.remove('pin'), 360);
+    if (flip) setTimeout(() => div.classList.remove('flip'), dur(420) + 40);
+    if (isNew) setTimeout(() => div.classList.remove('pin'), dur(420) + 40);
     const img = document.createElement('img');
     const noThumb = () => { div.classList.add('nothumb'); img.remove(); };
     if (p.thumbData) img.src = p.thumbData;
@@ -634,7 +657,7 @@ $('photoGrid').addEventListener('click', async (e) => {
   if (armedPhoto === id) {
     disarmPhoto();
     const ph = b.closest('.photo');
-    if (ph && !reduceMotion.matches) { if (ph.classList.contains('pout')) return; ph.classList.add('pout'); await wait(160); }
+    if (ph && !reduceMotion.matches) { if (ph.classList.contains('pout')) return; ph.classList.add('pout'); await wait(dur(315)); }
     await deletePhoto(id); return;
   }
   disarmPhoto(); armedPhoto = id;
@@ -658,39 +681,49 @@ async function flushNote() {
   await persistDay(state.day, { note: true });
   $('noteState').textContent = 'Kaydedildi';
 }
-const NAV_MS = 340;
 let booted = false;
 async function selectSite(site) {
   await flushNote();
-  state.site = site; ls.set('sd_site', site);
-  await renderAll();
-  $('picker').hidden = true;
-  if (!booted) { booted = true; playClass(document.querySelector('main'), 'boot', 360 + 70 * 5); }
-  else playClass(document.querySelector('main'), 'pg-up', 320);
+  const first = !booted, main = document.querySelector('main');
+  const useVT = !first && canVT();
+  const update = async () => {
+    state.site = site; ls.set('sd_site', site);
+    await renderAll();
+    $('picker').hidden = true;
+    if (!first && !useVT) playClass(main, 'pg-up', dur(600));
+  };
+  if (first) { await update(); booted = true; playClass(main, 'boot', dur(600 + 350)); }
+  else if (!(await pageTransition('site', update))) await update();
   pullDay(); pullRoster().then(pullMeta);
   renderAgo();
 }
 // Gün geçişi: animasyon sürerken gelen istekler üst üste binmez; yalnızca en son hedef tarih sıraya alınır.
 let navBusy = false, navTarget = null;
 const navBase = () => (navBusy && navTarget) || state.date;
-const stepDay = (delta) => setDate(shiftDate(navBase(), delta));
-async function setDate(date) {
+const stepDay = (delta, opts) => setDate(shiftDate(navBase(), delta), opts);
+// opts.noVT: sürükleyerek kaydırma sonrası (kartlar zaten elle taşındı; View Transition yerine yedek animasyon)
+async function setDate(date, opts = {}) {
   if (!date) return;
   if (navBusy) { navTarget = date; if (date !== state.date) $('dateText').textContent = (date === today() ? 'Bugün · ' : '') + shortDate(date); return; }
   navBusy = true;
   try {
-    let d = date;
+    let d = date, noVT = !!opts.noVT;
     while (d) {
       navTarget = null;
       if (d !== state.date) {
         await flushNote();
-        const dir = d > state.date ? 'pg-next' : 'pg-prev';
-        state.date = d;
-        await renderAll();
-        playClass(document.querySelector('main'), dir, NAV_MS);
-        releaseOut();
+        const kind = d > state.date ? 'next' : 'prev', target = d, useVT = !noVT && canVT();
+        const update = async () => {
+          state.date = target;
+          await renderAll();
+          if (!useVT) playClass(document.querySelector('main'), 'pg-' + kind, dur(600));
+          releaseOut();
+        };
+        const vt = await pageTransition(kind, update, { noVT });
+        if (!vt) await update();
+        noVT = false;
         pullDay();
-        if (!reduceMotion.matches) await wait(NAV_MS);
+        if (!reduceMotion.matches) await (vt ? Promise.race([vt.finished.catch(() => {}), wait(dur(600) + 500)]) : wait(dur(600)));
       } else renderDate();
       d = navTarget && navTarget !== state.date ? navTarget : null;
     }
@@ -1230,7 +1263,7 @@ function swipeSpring() {
   const x = swipe.dx;
   for (const c of swipe.cards) {
     c.style.transform = ''; c.style.willChange = '';
-    if (x && !reduceMotion.matches) c.animate([{ transform: `translateX(${x}px)` }, { transform: 'translateX(0)' }], { duration: 260, easing: 'cubic-bezier(.34,1.56,.64,1)' });
+    if (x && !reduceMotion.matches) c.animate([{ transform: `translateX(${x}px)` }, { transform: 'translateX(0)' }], { duration: dur(360), easing: 'cubic-bezier(.34,1.56,.64,1)' });
   }
   swipe.dx = 0; swipe.cards = [];
 }
@@ -1239,12 +1272,12 @@ function swipeCommit(dir) {
   swipe.dx = 0; swipe.cards = [];
   if (navBusy || reduceMotion.matches || !cards.length) {
     cards.forEach((c) => { c.style.transform = ''; c.style.willChange = ''; });
-    stepDay(dir); return;
+    stepDay(dir, { noVT: true }); return;
   }
   const to = -dir * innerWidth * 0.5;
-  outAnims = cards.map((c) => c.animate([{ transform: `translateX(${x}px)`, opacity: 1 }, { transform: `translateX(${to}px)`, opacity: 0 }], { duration: 160, easing: 'cubic-bezier(.4,0,1,1)', fill: 'forwards' }));
+  outAnims = cards.map((c) => c.animate([{ transform: `translateX(${x}px)`, opacity: 1 }, { transform: `translateX(${to}px)`, opacity: 0 }], { duration: dur(300), easing: cssEase('--ease-in', 'cubic-bezier(.4,0,1,1)'), fill: 'forwards' }));
   cards.forEach((c) => { c.style.transform = ''; c.style.willChange = ''; });
-  Promise.all(outAnims.map((a) => a.finished.catch(() => {}))).then(() => stepDay(dir));
+  Promise.all(outAnims.map((a) => a.finished.catch(() => {}))).then(() => stepDay(dir, { noVT: true }));
 }
 {
   const sc = $('scroller');
@@ -1292,7 +1325,7 @@ document.addEventListener('pointerdown', (e) => {
   const d = document.createElement('span'); d.className = 'ripple'; d.setAttribute('aria-hidden', 'true');
   d.style.cssText = `left:${x - rad}px;top:${y - rad}px;width:${rad * 2}px;height:${rad * 2}px`;
   el.appendChild(d);
-  setTimeout(() => d.remove(), 440);
+  setTimeout(() => d.remove(), dur(420) + 40);
 }, { passive: true });
 
 // ---------- Not (otomatik kayıt) ----------
@@ -1461,7 +1494,7 @@ async function openCamera(kind) {
   cam.stream = stream; cam.site = state.site; cam.date = state.date; cam.saved = 0;
   cam.urls.forEach((u) => URL.revokeObjectURL(u)); cam.urls = [];
   $('camStrip').textContent = ''; $('camCount').textContent = '0 fotoğraf';
-  const v = $('camVideo'); v.srcObject = stream; showAnim($('cam'), 'in', 160);
+  const v = $('camVideo'); v.srcObject = stream; showAnim($('cam'), 'in', dur(360));
   try { const st = stream.getVideoTracks()[0].getSettings(); logEv(`Kamera akışı: ${st.width}x${st.height}` + (st.zoom ? ` zoom ${st.zoom}` : '')); } catch { /* yoksay */ }
   v.onloadedmetadata = () => { fitCamVideo(); logEv(`Önizleme: ${v.videoWidth}x${v.videoHeight}`); };
   try { await v.play(); } catch { /* autoplay zaten var */ }
@@ -1482,7 +1515,7 @@ function camShot() {
   if (!cam.stream || !v.videoWidth) return;
   const c = document.createElement('canvas'); c.width = v.videoWidth; c.height = v.videoHeight;
   c.getContext('2d').drawImage(v, 0, 0);
-  try { $('camFlash').animate([{ opacity: 0.85 }, { opacity: 0 }], { duration: 180 }); } catch { /* yoksay */ }
+  try { $('camFlash').animate([{ opacity: 0.85 }, { opacity: 0 }], { duration: dur(180) }); } catch { /* yoksay */ }
   const site = cam.site, date = cam.date, kind = cam.kind;
   // Her çekim hemen tuvale kopyalanır; kodlama/kaydetme sırayla yapılır, hiçbiri düşmez.
   cam.chain = cam.chain.then(async () => {
@@ -1536,7 +1569,7 @@ async function refreshBanner() {
   const wasPending = bar.classList.contains('pending');
   bar.classList.toggle('pending', n > 0); bar.classList.toggle('err', showErr); bar.classList.toggle('syncing', syncing && n > 0);
   $('syncText').innerHTML = n > 0 ? `<b id="pendingCount">${n}</b> öğe gönderilmeyi bekliyor` : `<b id="pendingCount">0</b> öğe bekliyor · hepsi gönderildi`;
-  if (n > 0 || showErr) { clearTimeout(bar._dn); bar.classList.remove('done'); if (bar.hidden || bar.classList.contains('leaving')) showAnim(bar, 'in', 200); }
+  if (n > 0 || showErr) { clearTimeout(bar._dn); bar.classList.remove('done'); if (bar.hidden || bar.classList.contains('leaving')) showAnim(bar, 'in', dur(420)); }
   else if (wasPending && !bar.hidden && !reduceMotion.matches) { // hepsi gitti: ✔ belirir, kutu ~900 ms sonra kapanır
     bar.classList.add('done'); clearTimeout(bar._dn);
     bar._dn = setTimeout(() => { bar.classList.remove('done', 'in', 'leaving', 'syncing'); bar.hidden = true; }, 900);
@@ -2188,14 +2221,22 @@ function openSettings() {
   renderLog();
   renderSurum();
   const s = getSettings(); $('setUrl').value = s.url; $('setKey').value = s.key;
-  $('testResult').textContent = ''; ui.hideTeam = null; ui.siteHideTeam = null; ui.modeConfirm = null; ui.delName = null; ui.archName = null; ui.editName = null; renderTeamSettings(); renderLocInfo(); showAnim($('settings'), 'sheet-in', 380);
+  $('testResult').textContent = ''; ui.hideTeam = null; ui.siteHideTeam = null; ui.modeConfirm = null; ui.delName = null; ui.archName = null; ui.editName = null; renderTeamSettings(); renderLocInfo(); showAnim($('settings'), 'sheet-in', dur(560));
   pullRoster().then(pullMeta);
 }
 function readSettingsForm() { ls.set('sd_settings', { url: $('setUrl').value.trim(), key: $('setKey').value.trim() }); }
 function autoSaveSettings() { readSettingsForm(); $('testResult').textContent = 'Kaydedildi ✓'; }
 ['setUrl', 'setKey'].forEach((id) => { $(id).addEventListener('input', autoSaveSettings); $(id).addEventListener('change', autoSaveSettings); });
+function renderMotionSeg() {
+  const v = readMotion();
+  document.querySelectorAll('#motionSeg [data-mf]').forEach((b) => { const on = Math.abs(Number(b.dataset.mf) - v) < 1e-6; b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on)); });
+}
+document.querySelectorAll('#motionSeg [data-mf]').forEach((b) => b.addEventListener('click', () => {
+  const v = Number(b.dataset.mf); ls.set('sd_motion', v); applyMotion(v); renderMotionSeg();
+}));
+renderMotionSeg();
 $('btnSettings').addEventListener('click', openSettings);
-$('closeSettings').addEventListener('click', () => { readSettingsForm(); hideAnim($('settings'), 260); scheduleSync(300); });
+$('closeSettings').addEventListener('click', () => { readSettingsForm(); hideAnim($('settings'), dur(420)); scheduleSync(300); });
 $('saveSettings').addEventListener('click', () => { readSettingsForm(); $('testResult').textContent = 'Kaydedildi ✓'; });
 $('testConn').addEventListener('click', async () => {
   readSettingsForm();

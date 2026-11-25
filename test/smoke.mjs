@@ -31,6 +31,15 @@ const check = (ok, msg) => { console.log((ok ? 'GEÇTİ  ' : 'KALDI  ') + msg); 
 
 const GAS = 'https://script.google.com/macros/s/TEST/exec';
 const browser = await chromium.launch({ args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] });
+// 3.4: testler hızlı çalışsın diye animasyon hızı çarpanı küçük (0.1); uygulama bu değeri sessizce kabul eder.
+{
+  const newCtx0 = browser.newContext.bind(browser);
+  browser.newContext = async (o) => {
+    const c = await newCtx0(o);
+    await c.addInitScript(() => { try { if (localStorage.getItem('sd_motion') === null) localStorage.setItem('sd_motion', '0.1'); } catch { /* yoksay */ } });
+    return c;
+  };
+}
 const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true, permissions: ['camera'] });
 const page = await ctx.newPage();
 const errors = [];
@@ -1325,6 +1334,73 @@ await ctx3.close();
   check((await secOf(A).locator('.chip').count()) === 2 && (await secOf(A).locator('.stepper').count()) === 0, '3.1: İsimle\'ye dönünce çipler geri geldi');
   check(A.errs.length === 0 && B.errs.length === 0, '3.1: sayfa hatası yok ' + [...A.errs, ...B.errs].join('|'));
   await A.c.close(); await B.c.close();
+}
+
+// ---- 3.4: animasyon hızı ayarı ve View Transitions ----
+{
+  const mk = async (init) => {
+    const c = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+    const p = await c.newPage(); const errs = [];
+    p.on('pageerror', (e) => errs.push('pageerror: ' + e.message));
+    await p.addInitScript(() => { if (!localStorage.getItem('sd_site')) localStorage.setItem('sd_site', JSON.stringify('gundogdu')); });
+    if (init) await p.addInitScript(init);
+    await p.goto(base + 'index.html'); await p.waitForSelector('#chips', { state: 'attached' }); await p.waitForTimeout(400);
+    return { c, p, errs };
+  };
+  const mf = (p) => p.evaluate(() => document.documentElement.style.getPropertyValue('--mf'));
+  // varsayılan: Yavaş (1.4)
+  const D = await mk(() => { try { localStorage.removeItem('sd_motion'); } catch { /* yoksay */ } });
+  check((await mf(D.p)) === '1.4' && (await D.p.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--d-page').trim())) !== '', '3.4: varsayılan animasyon hızı Yavaş (--mf 1.4)');
+  await D.p.click('#btnSettings'); await D.p.waitForTimeout(300);
+  check(await D.p.locator('#motionSeg [data-mf="1.4"]').evaluate((e) => e.classList.contains('on') && e.getAttribute('aria-pressed') === 'true'), '3.4: Ayarlar > Animasyon hızı: Yavaş seçili');
+  await D.p.click('#motionSeg [data-mf="0.7"]');
+  check((await mf(D.p)) === '0.7' && (await D.p.evaluate(() => localStorage.getItem('sd_motion'))) === '0.7' && await D.p.locator('#motionSeg [data-mf="0.7"]').evaluate((e) => e.classList.contains('on')), '3.4: Hızlı seçilince --mf 0.7 anında uygulanır ve saklanır');
+  check(await D.p.evaluate(() => { const r = getComputedStyle(document.documentElement); return r.getPropertyValue('--ease-out').includes('cubic-bezier') && r.getPropertyValue('--d-page').trim() !== ''; }), '3.4: süre ve yumuşatma belirteçleri tanımlı');
+  await D.p.click('#motionSeg [data-mf="1"]');
+  check((await mf(D.p)) === '1', '3.4: Normal seçilince --mf 1');
+  check(D.errs.length === 0, '3.4: ayar sayfa hatası yok ' + D.errs.join('|'));
+  await D.c.close();
+
+  // View Transitions var (saplama): gün ve şantiye değişimi startViewTransition ile
+  const V = await mk(() => {
+    window.__vt = [];
+    document.startViewTransition = function (cb) {
+      window.__vt.push(document.documentElement.dataset.vt + (document.documentElement.getAttribute('data-vt') ? '' : '?'));
+      const u = Promise.resolve().then(cb);
+      return { updateCallbackDone: u, ready: u, finished: u.then(() => new Promise((r) => setTimeout(r, 40))), skipTransition() {} };
+    };
+  });
+  const t0 = await V.p.textContent('#dateText');
+  await V.p.click('#nextDay'); await V.p.waitForTimeout(500);
+  check((await V.p.evaluate(() => window.__vt)).join() === 'next' && (await V.p.textContent('#dateText')) !== t0, '3.4: gün değişimi document.startViewTransition ile (yön: next)');
+  check(await V.p.evaluate(() => !document.documentElement.hasAttribute('data-vt') && !document.documentElement.classList.contains('vt-bar')), '3.4: geçiş bitince data-vt temizlenir');
+  await V.p.click('#prevDay'); await V.p.waitForTimeout(500);
+  await V.p.locator('#siteTabs button[data-site="koseilyas"]').click(); await V.p.waitForTimeout(500);
+  check((await V.p.evaluate(() => window.__vt)).join() === 'next,prev,site' && (await V.p.evaluate(() => document.documentElement.dataset.site)) === 'koseilyas', '3.4: şantiye sekmesi geçişi startViewTransition ile (site)');
+  check(await V.p.evaluate(() => { const css = [...document.styleSheets].map((s) => [...s.cssRules].map((r) => r.cssText).join('\n')).join('\n'); return /view-transition-old\(page\)/.test(css) && /view-transition-new\(page\)/.test(css) && /view-transition-name:\s*page/.test(css); }), '3.4: CSS "page" geçiş kuralları var');
+  check(V.errs.length === 0, '3.4: VT sayfa hatası yok ' + V.errs.join('|'));
+  await V.c.close();
+
+  // API yok: yedek (CSS sınıfı) animasyonu
+  const F = await mk(() => { document.startViewTransition = undefined; localStorage.setItem('sd_motion', '1'); });
+  const f0 = await F.p.textContent('#dateText');
+  await F.p.click('#nextDay');
+  await F.p.waitForFunction(() => document.querySelector('main').classList.contains('pg-next'), null, { timeout: 2000 }).then(() => check(true, '3.4: API yokken yedek animasyon sınıfı (pg-next) uygulanır'), () => check(false, '3.4: API yokken yedek animasyon sınıfı (pg-next) uygulanır'));
+  await F.p.waitForTimeout(900);
+  check((await F.p.textContent('#dateText')) !== f0 && !(await F.p.evaluate(() => document.documentElement.hasAttribute('data-vt'))), '3.4: yedek yolda gün değişti');
+  await F.p.locator('#siteTabs button[data-site="koseilyas"]').click();
+  await F.p.waitForFunction(() => document.querySelector('main').classList.contains('pg-up'), null, { timeout: 2000 }).then(() => check(true, '3.4: API yokken şantiye geçişi yedek (pg-up)'), () => check(false, '3.4: API yokken şantiye geçişi yedek (pg-up)'));
+  check(F.errs.length === 0, '3.4: yedek yol sayfa hatası yok ' + F.errs.join('|'));
+  await F.c.close();
+
+  // Gerçek (yerel) API varsa hatasız çalışır
+  const N = await mk();
+  const n0 = await N.p.textContent('#dateText');
+  await N.p.click('#nextDay'); await N.p.waitForTimeout(700); await N.p.click('#prevDay'); await N.p.waitForTimeout(700);
+  await N.p.locator('#siteTabs button[data-site="koseilyas"]').click(); await N.p.waitForTimeout(700);
+  check((await mf(N.p)) === '0.1', '3.4: sessiz küçük değer (0.1) kabul edilir');
+  check((await N.p.textContent('#dateText')) === n0 && N.errs.length === 0, '3.4: tarayıcının kendi View Transition desteğiyle gezinme hatasız ' + N.errs.join('|'));
+  await N.c.close();
 }
 
 // Ayar yoksa Türkçe uyarı
