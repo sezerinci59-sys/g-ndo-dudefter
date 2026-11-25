@@ -1402,6 +1402,61 @@ await ctx3.close();
   check((await N.p.textContent('#dateText')) === n0 && N.errs.length === 0, '3.4: tarayıcının kendi View Transition desteğiyle gezinme hatasız ' + N.errs.join('|'));
   await N.c.close();
 }
+// 3.5: ekibi bugünlük gizle (şeride basılı tut)
+{
+  const ctx = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const p = await ctx.newPage(); const errs = [];
+  p.on('pageerror', (e) => errs.push(e.message));
+  await p.addInitScript(() => { if (!localStorage.getItem('sd_site')) localStorage.setItem('sd_site', JSON.stringify('gundogdu')); });
+  await p.goto(base + 'index.html');
+  await p.waitForSelector('#chips', { state: 'attached' });
+  await p.fill('#newTeam', 'Sıva'); await p.click('#addTeam');
+  const sec = p.locator('#chips section.team', { has: p.locator('h3', { hasText: /^Sıva$/ }) });
+  await sec.locator('form.teamadd input').fill('Kemal'); await sec.locator('form.teamadd button').click();
+  const hold = async (ms = 650) => {
+    const b = await sec.locator('.team-head h3').boundingBox();
+    await p.mouse.move(b.x + 5, b.y + b.height / 2); await p.mouse.down(); await p.waitForTimeout(ms); await p.mouse.up();
+  };
+  await hold(); await p.waitForTimeout(350);
+  check((await p.locator('.daypop').count()) === 1 && (await p.locator('.daypop .daypop-warn').count()) === 0, '3.5: basılı tutunca açılır pencere, kimse işaretli değilken uyarı yok');
+  const pb = await p.locator('.daypop').boundingBox(), hb = await sec.locator('.team-head').boundingBox();
+  check(pb.y >= hb.y + hb.height - 2 && pb.y < hb.y + hb.height + 20, '3.5: pencere şeridin hemen altında');
+  await p.locator('.daypop [data-dpcancel]').click(); await p.waitForTimeout(400);
+  check((await p.locator('.daypop').count()) === 0 && (await sec.count()) === 1, '3.5: İptal pencereyi kapatır, ekip durur');
+  await sec.locator('.chip[data-name="Kemal"]').click();
+  await hold(); await p.waitForTimeout(350);
+  check(/Bu ekipte bugün 1 kişi işaretli\./.test(await p.locator('.daypop-warn').textContent()), '3.5: işaretli kişi varsa uyarı satırı');
+  // pencere açıkken kaydırarak gün değişmez
+  const d0 = await p.inputValue('#dateInput');
+  const cdp = await ctx.newCDPSession(p); const sb = await p.locator('#summary').boundingBox(), sy = sb.y + sb.height / 2;
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 300, y: sy }] });
+  for (let i = 1; i <= 6; i++) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 300 - 25 * i, y: sy + 2 }] });
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await p.waitForTimeout(600);
+  check((await p.inputValue('#dateInput')) === d0, '3.5: pencere açıkken gün kaydırma yok sayılır');
+  await p.mouse.click(200, 700); await p.waitForTimeout(400);
+  check((await p.locator('.daypop').count()) === 0, '3.5: dışarı dokunmak kapatır');
+  await hold(); await p.waitForTimeout(350);
+  await p.locator('.daypop [data-dphide]').click(); await p.waitForTimeout(700);
+  check((await sec.count()) === 0, '3.5: Bugünlük gizle ekibi kaldırır');
+  check(/^1 ekip bugün gizli/.test((await p.locator('#dayHideNote').textContent()).trim()) && await p.locator('#dayHideNote #dayShow').isVisible(), '3.5: alt satır "1 ekip bugün gizli · Göster"');
+  check(await p.evaluate(() => { const o = JSON.parse(localStorage.getItem('sd_day_hide') || '{}'); const k = Object.keys(o)[0] || ''; return k.endsWith('|gundogdu') && o[k][0] === 'Sıva'; }), '3.5: sd_day_hide kaydedildi');
+  await p.reload(); await p.waitForSelector('#chips', { state: 'attached' }); await p.waitForTimeout(500);
+  check((await p.locator('#chips section.team', { has: p.locator('h3', { hasText: /^Sıva$/ }) }).count()) === 0, '3.5: yenilemede hâlâ gizli');
+  // diğer şantiye ve ertesi gün hâlâ görünür
+  const other = p.locator('.tabs button').nth(1); await other.click(); await p.waitForTimeout(600);
+  check((await p.locator('#chips section.team', { has: p.locator('h3', { hasText: /^Sıva$/ }) }).count()) === 1 && (await p.locator('#dayHideNote').isHidden()), '3.5: diğer şantiyede görünür');
+  await p.locator('.tabs button').nth(0).click(); await p.waitForTimeout(600);
+  await p.evaluate(() => document.getElementById('nextDay')?.click()); await p.waitForTimeout(700);
+  const secN = p.locator('#chips section.team', { has: p.locator('h3', { hasText: /^Sıva$/ }) });
+  check((await p.inputValue('#dateInput')) !== d0 && (await secN.count()) === 1, '3.5: ertesi gün ekip yine görünür');
+  await p.evaluate(() => document.getElementById('prevDay')?.click()); await p.waitForTimeout(700);
+  await p.locator('#dayShow').click(); await p.waitForTimeout(500);
+  check((await secN.count()) === 1 && (await p.locator('#dayHideNote').isHidden()), '3.5: Göster ekibi geri getirir');
+  check(errs.length === 0, '3.5: sayfa hatası yok ' + errs.join('|'));
+  await ctx.close();
+}
+
 
 // Ayar yoksa Türkçe uyarı
 await page.unroute(GAS);
