@@ -834,9 +834,13 @@ function openDayPop(sec) {
   const no = document.createElement('button'); no.type = 'button'; no.className = 'btn small ghost'; no.dataset.dpcancel = '1'; no.textContent = 'İptal';
   row.append(hide, no); el.appendChild(row);
   const head = sec.querySelector('.team-head'), r = head.getBoundingClientRect();
-  el.style.top = Math.round(r.bottom + 6) + 'px';
   el.style.left = Math.round(Math.max(8, Math.min(r.left + 8, innerWidth - 8 - Math.min(300, innerWidth - 16)))) + 'px';
-  document.body.appendChild(el);
+  el.style.top = '-9999px'; document.body.appendChild(el);
+  // Parmağın altında kalmasın: şeridin ÜSTÜNDE aç; yer yoksa altında
+  const hdr = document.querySelector('.top'), minTop = (hdr ? hdr.getBoundingClientRect().bottom : 0) + 6;
+  let top = r.top - el.offsetHeight - 8, above = true;
+  if (top < minTop) { top = r.bottom + 6; above = false; }
+  el.style.top = Math.round(top) + 'px'; el.classList.toggle('above', above);
   const p = { el, skip: true, team: t.id };
   p.onClick = (e) => { if (p.skip) { p.skip = false; return; } if (!el.contains(e.target)) { e.stopPropagation(); e.preventDefault(); closeDayPop(); } };
   p.onDown = () => { p.skip = false; };
