@@ -1,5 +1,6 @@
 // Sürüm notları — her güncellemede en üste yeni satır eklenir.
 export const SURUMLER = [
+  { v: '3.8', t: '25.11.2026', n: ['Fotoğraf seçme: fotoğrafa bir kez dokun → ★ (tekrar dokun → kaldır). Seçili olmayanlarda boş yıldız görünmez.'] },
   { v: '3.7.3', t: '25.11.2026', n: ['Başlık yazısı birkaç piksel aşağı alındı.'] },
   { v: '3.7.2', t: '25.11.2026', n: ['Gündoğdu renk paleti: nane #CFEAE0, deniz mavisi #5B91A3, lacivert #2F4A63, gece #131B2B.'] },
   { v: '3.7.1', t: '25.11.2026', n: ['Köseilyas renk paleti: krem #EBEBD8, zeytin #637545, koyu zeytin #455230, adaçayı #9BA685.'] },

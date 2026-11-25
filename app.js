@@ -673,7 +673,12 @@ async function syncRename(q) {
 $('photoGrid').addEventListener('click', async (e) => {
   const sb = e.target.closest('[data-psel]');
   if (sb) { e.stopPropagation(); await toggleSelect(Number(sb.dataset.psel), sb); return; }
-  const b = e.target.closest('[data-pdel]'); if (!b) return;
+  const b = e.target.closest('[data-pdel]');
+  if (!b) { // fotoğrafın kendisine dokununca yıldız aç/kapa
+    const ph = e.target.closest('.photo'); const st = ph && ph.querySelector('[data-psel]');
+    if (st) await toggleSelect(Number(st.dataset.psel), st);
+    return;
+  }
   const id = Number(b.dataset.pdel);
   if (armedPhoto === id) {
     disarmPhoto();
