@@ -696,6 +696,7 @@ async function renderAll() {
   await loadDay();
   renderChips(); renderNote(); await renderPhotos();
   $('noteState').textContent = '';
+  maybeWeather();
 }
 
 // ---------- Şantiye / tarih seçimi ----------
@@ -788,6 +789,7 @@ function renderLocInfo() {
   const coords = ls.get('sd_coords', {}) || {};
   for (const s of Object.keys(SITES)) {
     $('loc-' + s).textContent = coords[s] ? `Kayıtlı: ${coords[s].lat.toFixed(5)}, ${coords[s].lng.toFixed(5)}` : 'Henüz kaydedilmedi.';
+    const wh = $('wxhint-' + s); if (wh) wh.hidden = !!coords[s];
   }
 }
 
@@ -1432,13 +1434,68 @@ document.addEventListener('pointerdown', (e) => {
   setTimeout(() => d.remove(), dur(420) + 40);
 }, { passive: true });
 
+// ---------- 3.9: Hava durumu satırı (bugünün notunun başına, günde bir kez) ----------
+const WX_KEY = 'sd_wx';
+const WX_TXT = { 0: 'açık', 1: 'az bulutlu', 2: 'parçalı bulutlu', 3: 'kapalı', 45: 'sisli', 48: 'sisli', 51: 'çisenti', 53: 'çisenti', 55: 'çisenti',
+  56: 'dondurucu çisenti', 57: 'dondurucu çisenti', 61: 'hafif yağmurlu', 63: 'yağmurlu', 65: 'kuvvetli yağmurlu', 66: 'dondurucu yağmur', 67: 'dondurucu yağmur',
+  71: 'hafif kar', 73: 'karlı', 75: 'yoğun kar', 77: 'kar taneli', 80: 'sağanak', 81: 'sağanak', 82: 'sağanak', 85: 'kar sağanağı', 86: 'kar sağanağı',
+  95: 'gök gürültülü fırtına', 96: 'dolu ile fırtına', 99: 'dolu ile fırtına' };
+function wxLine(j) {
+  const d = j && j.daily; if (!d) return null;
+  const f = (k) => Array.isArray(d[k]) ? d[k][0] : null;
+  const mn = f('temperature_2m_min'), mx = f('temperature_2m_max'), w = f('wind_speed_10m_max'), c = f('weather_code');
+  if (![mn, mx].every((x) => typeof x === 'number' && isFinite(x))) return null;
+  return `Hava: min ${Math.round(mn)}°C, maks ${Math.round(mx)}°C, ${WX_TXT[c] || 'değişken'}` + (Number(w) >= 30 ? ', rüzgârlı' : '');
+}
+function readWx() {
+  const m = ls.get(WX_KEY, {}); const o = m && typeof m === 'object' && !Array.isArray(m) ? m : {};
+  const lim = shiftDate(today(), -14); let dirty = false;
+  for (const k of Object.keys(o)) if (k.slice(0, 10) < lim) { delete o[k]; dirty = true; }
+  if (dirty) ls.set(WX_KEY, o);
+  return o;
+}
+function wxDone(key) { const o = readWx(); o[key] = true; ls.set(WX_KEY, o); }
+let wxBusy = false;
+async function maybeWeather() {
+  try {
+    if (wxBusy || !state.site || !state.day || state.loading || state.date !== today() || !navigator.onLine) return;
+    const site = state.site, date = state.date, key = `${date}|${site}`;
+    if (readWx()[key]) return;
+    if (/^Hava:/.test(state.day.note || '')) { wxDone(key); return; }
+    const c = (ls.get('sd_coords', {}) || {})[site];
+    if (!c || typeof c.lat !== 'number' || typeof c.lng !== 'number') return;
+    wxBusy = true;
+    let line;
+    try {
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${c.lat}&longitude=${c.lng}&daily=temperature_2m_min,temperature_2m_max,weather_code,wind_speed_10m_max&timezone=Europe%2FIstanbul&forecast_days=1`;
+      const ac = new AbortController(), to = setTimeout(() => ac.abort(), 8000);
+      try {
+        const r = await fetch(url, { signal: ac.signal });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        line = wxLine(await r.json());
+        if (!line) throw new Error('veri eksik');
+      } finally { clearTimeout(to); }
+    } catch (e) { logEv('Hava: alınamadı ' + (e && e.name === 'AbortError' ? '(zaman aşımı)' : (e && e.message) || '')); return; }
+    finally { wxBusy = false; }
+    // Bu arada gün/şantiye değişmiş ya da kullanıcı yazıyor olabilir: sonra yeniden denenir
+    if (state.site !== site || state.date !== date || !state.day || state.loading) return;
+    if (/^Hava:/.test(state.day.note || '')) { wxDone(key); return; }
+    if (noteDirty || document.activeElement === $('note')) return;
+    wxDone(key);
+    const cur = state.day.note || '';
+    state.day.note = line + (cur ? '\n' + cur : '');
+    await persistDay(state.day, { note: true });
+    renderNote();
+  } catch { wxBusy = false; }
+}
+
 // ---------- Not (otomatik kayıt) ----------
 let noteTimer, noteDirty = false;
 $('note').addEventListener('input', () => {
   noteDirty = true; $('noteState').textContent = 'Yazılıyor…';
   clearTimeout(noteTimer); noteTimer = setTimeout(flushNote, 700);
 });
-$('note').addEventListener('blur', flushNote);
+$('note').addEventListener('blur', () => { flushNote().then(() => maybeWeather()); });
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushNote(); else { scheduleSync(300); pullDay(); } });
 window.addEventListener('pagehide', flushNote);
 
@@ -1954,7 +2011,7 @@ async function sync(manual = false) {
 let syncTimer;
 function scheduleSync(ms = 1500) { clearTimeout(syncTimer); syncTimer = setTimeout(() => sync(), ms); }
 $('syncNow').addEventListener('click', () => sync(true));
-window.addEventListener('online', () => { sync(); pullDay(true); pullRoster().then(pullMeta); });
+window.addEventListener('online', () => { sync(); pullDay(true); pullRoster().then(pullMeta); maybeWeather(); });
 setInterval(() => { if (document.visibilityState === 'visible') sync(); }, 60000);
 
 // ---------- Sunucudan çekme (Drive > telefon) ----------
@@ -2146,6 +2203,7 @@ function fetchDay(site, date, fresh = false) {
   })().finally(() => {
     inflight.delete(k);
     if (shownMain(site, date) && state.loading) { state.loading = false; updateCounts(); }
+    if (shownMain(site, date)) maybeWeather();
   });
   inflight.set(k, p);
   return p;
@@ -2228,7 +2286,7 @@ function mergeMetaValue(k, srv, loc) {
 function metaUI(k) {
   if (k === 'sd_site_hide' || k === 'sd_team_mode') rosterChangedUI();
   else if (k === 'sd_arsiv') { if (!$('settings').hidden && !typingIn($('teamSettings'))) renderTeamSettings(); }
-  else if (k === 'sd_coords') { if (!$('settings').hidden) renderLocInfo(); }
+  else if (k === 'sd_coords') { if (!$('settings').hidden) renderLocInfo(); maybeWeather(); }
 }
 function applyServerMeta(k, value, at) {
   const changed = !sameJSON(ls.get(k, null), value);
@@ -2368,7 +2426,7 @@ document.querySelectorAll('[data-save-loc]').forEach((b) => b.addEventListener('
   try {
     const pos = await getPosition();
     const c = ls.get('sd_coords', {}) || {}; c[site] = pos; ls.set('sd_coords', c);
-    renderLocInfo(); toast(`${SITES[site]} konumu kaydedildi.`);
+    renderLocInfo(); maybeWeather(); toast(`${SITES[site]} konumu kaydedildi.`);
   } catch { info.textContent = 'Konum alınamadı. Safari\'de konum iznini kontrol edin.'; }
 }));
 

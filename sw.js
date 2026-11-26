@@ -1,4 +1,4 @@
-const CACHE = 'santiye-defteri-v49';
+const CACHE = 'santiye-defteri-v50';
 const SHELL = [
   './', './index.html', './app.css', './fonts/lexend.css', './fonts/lexend-latin-400.woff2', './fonts/lexend-latin-ext-400.woff2', './app.js', './surum.js', './manifest.webmanifest',
   './icons/icon-192.png', './icons/icon-512.png', './icons/apple-touch-icon.png'

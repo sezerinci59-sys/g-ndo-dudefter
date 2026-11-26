@@ -1459,6 +1459,81 @@ await ctx3.close();
 }
 
 
+// 3.9: hava durumu satırı
+{
+  const OM = 'https://api.open-meteo.com/**';
+  const mk = async (opts = {}) => {
+    const c = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+    const p = await c.newPage(); const errs = [], reqs = [], saves = [];
+    p.on('pageerror', (e) => errs.push(e.message));
+    const wx = { code: 2, min: 9.2, max: 15.6, wind: 12 };
+    await p.route(OM, (r) => { reqs.push(r.request().url()); return r.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' },
+      body: JSON.stringify({ daily: { temperature_2m_min: [wx.min], temperature_2m_max: [wx.max], weather_code: [wx.code], wind_speed_10m_max: [wx.wind] } }) }); });
+    await p.route(GAS, async (route) => {
+      const body = JSON.parse(route.request().postData() || '{}'); if (body.action === 'saveDay') saves.push(body);
+      await route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify((() => { const r = srv.reply(body); if (opts.coords === false && body.action === 'getMeta' && r.items) delete r.items.sd_coords; return r; })()) });
+    });
+    await p.addInitScript(([url, coords, note]) => {
+      if (localStorage.getItem('sd_init')) return; localStorage.setItem('sd_init', '1');
+      localStorage.setItem('sd_settings', JSON.stringify({ url, key: 'testkey' }));
+      localStorage.setItem('sd_site', JSON.stringify('gundogdu'));
+      if (coords) localStorage.setItem('sd_coords', JSON.stringify({ gundogdu: { lat: 41.01, lng: 28.97 } }));
+    }, [GAS, opts.coords !== false, opts.note]);
+    return { c, p, errs, reqs, saves, wx };
+  };
+  const noteOf = (p) => p.inputValue('#note');
+  // satır biçimi + bir kez
+  const tdA = await page.evaluate(() => { const d = new Date(), p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; });
+  srv.seedDay('gundogdu', tdA, {}, 'x'); srv.seedDay('gundogdu', tdA, {}, '');
+  const A = await mk();
+  await A.p.goto(base + 'index.html');
+  await A.p.waitForFunction(() => /^Hava:/.test(document.getElementById('note').value), null, { timeout: 10000 });
+  check((await noteOf(A.p)) === 'Hava: min 9°C, maks 16°C, parçalı bulutlu', '3.9: satır biçimi ve kod 2 eşlemesi: ' + await noteOf(A.p));
+  check(A.reqs.length === 1 && /latitude=41\.01&longitude=28\.97/.test(A.reqs[0]) && !/precipitation/.test(A.reqs[0]), '3.9: tek istek, doğru konum');
+  await A.p.waitForFunction(() => document.getElementById('pendingCount').textContent === '0', null, { timeout: 15000 });
+  check(A.saves.some((b) => (b.note || '').startsWith('Hava: min 9°C') && b.noteUpdatedAt > 0), '3.9: saveDay yükü notu içerir');
+  await A.p.reload(); await A.p.waitForTimeout(800);
+  check((await noteOf(A.p)).split('Hava:').length === 2 && A.reqs.length === 1, '3.9: yenilemede tekrar eklenmez');
+  // kullanıcı silerse tekrar eklenmez
+  await A.p.fill('#note', ''); await A.p.locator('#note').blur(); await A.p.waitForTimeout(900);
+  await A.p.reload(); await A.p.waitForTimeout(1000);
+  check((await noteOf(A.p)) === '' && A.reqs.length === 1, '3.9: silinen satır o gün tekrar eklenmez');
+  check(await A.p.evaluate(() => Object.values(JSON.parse(localStorage.getItem('sd_wx') || '{}')).every((v) => v === true)), '3.9: sd_wx kaydı');
+  // geçmiş gün
+  await A.p.click('#prevDay'); await A.p.waitForTimeout(1000);
+  check(A.reqs.length === 1 && !/^Hava:/.test(await noteOf(A.p)), '3.9: geçmiş güne eklenmez');
+  check(A.errs.length === 0, '3.9: sayfa hatası yok ' + A.errs.join('|'));
+  await A.c.close();
+  // rüzgârlı
+  const W = await mk(); W.wx.wind = 35; W.wx.min = 8.6;
+  await W.p.goto(base + 'index.html');
+  await W.p.waitForFunction(() => /^Hava:/.test(document.getElementById('note').value), null, { timeout: 10000 });
+  check((await noteOf(W.p)) === 'Hava: min 9°C, maks 16°C, parçalı bulutlu, rüzgârlı', '3.9: 35 km/sa rüzgârlı: ' + await noteOf(W.p));
+  await W.c.close();
+  // mevcut not önüne eklenir; "Hava:" ile başlıyorsa eklenmez
+  const srvN = srv; const td = await page.evaluate(() => { const d = new Date(), p = (n) => String(n).padStart(2, '0'); return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`; });
+  srvN.seedDay('gundogdu', td, {}, 'Hava: min 1°C, maks 2°C, kapalı\nbaşka telefon');
+  const H = await mk();
+  await H.p.goto(base + 'index.html'); await H.p.waitForTimeout(2000);
+  check(H.reqs.length === 0 && (await noteOf(H.p)).startsWith('Hava: min 1°C'), '3.9: not zaten "Hava:" ile başlıyorsa eklenmez');
+  await H.c.close();
+  srvN.seedDay('gundogdu', td, {}, 'Beton döküldü');
+  const P = await mk();
+  await P.p.goto(base + 'index.html');
+  await P.p.waitForFunction(() => /^Hava:/.test(document.getElementById('note').value), null, { timeout: 10000 });
+  check((await noteOf(P.p)) === 'Hava: min 9°C, maks 16°C, parçalı bulutlu\nBeton döküldü', '3.9: mevcut notun başına eklenir');
+  await P.c.close();
+  // koordinat yok
+  srvN.seedDay('gundogdu', td, {}, '');
+  const N = await mk({ coords: false });
+  await N.p.goto(base + 'index.html'); await N.p.waitForTimeout(1500);
+  check(N.reqs.length === 0 && !/^Hava:/.test(await noteOf(N.p)), '3.9: konum yoksa istek yok ' + N.reqs.length + JSON.stringify(await noteOf(N.p)));
+  await N.p.click('#btnSettings').catch(() => {});
+  const vis = await N.p.evaluate(() => { const e = document.getElementById('wxhint-gundogdu'); return !!e && !e.hidden && /konumunu kaydedin/.test(e.textContent); });
+  check(vis, '3.9: Ayarlar\'da konum ipucu');
+  await N.c.close();
+}
+
 // Ayar yoksa Türkçe uyarı
 await page.unroute(GAS);
 await page.evaluate(() => localStorage.setItem('sd_settings', '{}'));
