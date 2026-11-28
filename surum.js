@@ -1,5 +1,6 @@
 // Sürüm notları — her güncellemede en üste yeni satır eklenir.
 export const SURUMLER = [
+  { v: '4.0', t: '28.11.2026', n: ['Yeni: Sorular kartı. Claude\'un irsaliye ve rapor soruları en üstte görünür; fotoğrafı açıp seçenekle ya da yazarak cevaplarsın. Cevap internetsiz de kaydedilir, sonra gönderilir. Apps Script güncellemesi gerekir.'] },
   { v: '3.9', t: '26.11.2026', n: ['Hava durumu: bugünün notunun başına otomatik eklenir (örn. "Hava: min 9°C, maks 16°C, parçalı bulutlu"; rüzgâr 30 km/sa ve üstüyse ", rüzgârlı"). Şantiye konumuna göre (Open-Meteo). Silinirse o gün tekrar eklenmez.'] },
   { v: '3.8', t: '25.11.2026', n: ['Fotoğraf seçme: fotoğrafa bir kez dokun → ★ (tekrar dokun → kaldır). Seçili olmayanlarda boş yıldız görünmez.'] },
   { v: '3.7.3', t: '25.11.2026', n: ['Başlık yazısı birkaç piksel aşağı alındı.'] },

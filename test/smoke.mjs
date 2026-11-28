@@ -858,11 +858,11 @@ await ctx3.close();
   const sy2 = sb2.y + sb2.height / 2;
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: 200, y: sy2 }] });
   for (const x of [190, 170, 150, 130]) await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: sy2 + 2 }] });
-  const mid = await p6.evaluate(() => new DOMMatrix(getComputedStyle(document.querySelector('main .card')).transform).m41);
+  const mid = await p6.evaluate(() => new DOMMatrix(getComputedStyle(document.querySelector('main .card:not([hidden])')).transform).m41);
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x: 160, y: sy2 + 2 }] });
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   await p6.waitForTimeout(450);
-  const after = await p6.evaluate(() => new DOMMatrix(getComputedStyle(document.querySelector('main .card')).transform).m41);
+  const after = await p6.evaluate(() => new DOMMatrix(getComputedStyle(document.querySelector('main .card:not([hidden])')).transform).m41);
   check(mid < -40 && Math.abs(after) < 1 && (await dateVal()) === t6, '2.9.1: içerik parmakla kayar (' + Math.round(mid) + ' px), eşik altında geri yaylanır');
   await p6.fill('#dateInput', '2020-01-01');
   await p6.waitForFunction(() => document.getElementById('dateInput').value === '2020-01-01');
@@ -1532,6 +1532,59 @@ await ctx3.close();
   const vis = await N.p.evaluate(() => { const e = document.getElementById('wxhint-gundogdu'); return !!e && !e.hidden && /konumunu kaydedin/.test(e.textContent); });
   check(vis, '3.9: Ayarlar\'da konum ipucu');
   await N.c.close();
+}
+
+// ---- 4.0: Sorular kartı ----
+{
+  const srvQ = newSrv(), recQ = [];
+  srvQ.gas.call({ action: 'getQuestions' }); // e-tabloyu oluştur
+  const up = srvQ.gas.call({ action: 'uploadPhoto', site: 'koseilyas', date: '2026-11-28', name: 'İrsaliye_28.11.2026_1.jpg', base64: Buffer.from('fake').toString('base64') });
+  const qs = srvQ.gas.ssOf('gundogdu').insertSheet('SORULAR');
+  [['ID', 'Tarih', 'Şantiye', 'Soru', 'Fotoğraf ID', 'Seçenekler', 'Cevap', 'Cevaplanma', 'Durum', 'Sonuç'],
+   ['Q1', '28.11.2026', 'Köseilyas', 'Tarih 09.11 mi?', up.fileId, 'Evet | Hayır', '', '', 'Açık', ''],
+   ['Q2', '28.11.2026', 'Gündoğdu', 'Firma hangisi?', '', '', '', '', 'Açık', ''],
+   ['Q0', '27.11.2026', 'Gündoğdu', 'Eski soru', '', '', 'tamam', 1, 'İşlendi', 'Deftere yazıldı']].forEach((r, i) => r.forEach((v, j) => qs.set(i + 1, j + 1, v)));
+  const ctxQ = await browser.newContext({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true });
+  const pQ = await ctxQ.newPage(); const errsQ = [];
+  pQ.on('pageerror', (e) => errsQ.push('pageerror: ' + e.message));
+  let offline = false;
+  await pQ.route(GAS, async (route) => {
+    if (offline) return route.abort('failed');
+    const body = JSON.parse(route.request().postData() || '{}'); recQ.push(body);
+    await route.fulfill({ status: 200, contentType: 'application/json', headers: { 'access-control-allow-origin': '*' }, body: JSON.stringify(serverReply(srvQ, body)) });
+  });
+  await pQ.addInitScript(([url]) => {
+    if (!localStorage.getItem('sd_settings')) { localStorage.setItem('sd_settings', JSON.stringify({ url, key: 'k' })); localStorage.setItem('sd_site', JSON.stringify('gundogdu')); }
+  }, [GAS]);
+  await pQ.goto(base + 'index.html');
+  await pQ.waitForFunction(() => !document.getElementById('qCard').hidden && document.querySelectorAll('#qList .qitem').length === 3, null, { timeout: 10000 });
+  check((await pQ.textContent('#qBadge')) === '2', '4.0: Sorular kartı görünür, 2 açık soru rozeti');
+  check((await pQ.locator('#qList .qitem.done').count()) === 1, '4.0: işlenen soru "Son işlenenler"de');
+  // fotoğraf
+  await pQ.click('#qList [data-qphoto]');
+  await pQ.waitForSelector('#qList img.qthumb');
+  check(recQ.some((b) => b.action === 'questionPhoto' && b.fileId === up.fileId), '4.0: fotoğraf Apps Script\'ten istendi');
+  await pQ.click('#qList img.qthumb');
+  check(await pQ.isVisible('#qPhotoOv'), '4.0: fotoğrafa dokununca büyük açılır');
+  await pQ.click('#qPhotoOv');
+  // seçenekle cevap
+  await pQ.click('#qList .qitem[data-qid="Q1"] [data-qopt="Evet"]');
+  await pQ.click('#qList .qitem[data-qid="Q1"] [data-qsend]');
+  await pQ.waitForFunction(() => /Gönderildi/.test(document.querySelector('#qList .qitem[data-qid="Q1"]').textContent), null, { timeout: 10000 });
+  check(qs.get(2, 7) === 'Evet' && qs.get(2, 9) === 'Cevaplandı', '4.0: seçenek cevabı E-Tabloya yazıldı');
+  check((await pQ.textContent('#qBadge')) === '1', '4.0: rozet 1\'e düştü');
+  // internetsiz yazılı cevap: kuyrukta bekler, internet gelince gider
+  offline = true;
+  await pQ.fill('#qList .qitem[data-qid="Q2"] textarea', 'Meta Mimarlık');
+  await pQ.click('#qList .qitem[data-qid="Q2"] [data-qsend]');
+  await pQ.waitForFunction(() => /bekliyor/.test(document.querySelector('#qList .qitem[data-qid="Q2"]').textContent));
+  check(qs.get(3, 7) === '', '4.0: internetsiz cevap telefonda bekliyor');
+  offline = false;
+  await pQ.evaluate(() => document.getElementById('syncNow').click());
+  await pQ.waitForFunction(() => /Gönderildi/.test(document.querySelector('#qList .qitem[data-qid="Q2"]').textContent), null, { timeout: 10000 });
+  check(qs.get(3, 7) === 'Meta Mimarlık', '4.0: internet gelince yazılı cevap gönderildi');
+  check(errsQ.length === 0, '4.0: sayfa hatası yok ' + errsQ.join(' | '));
+  await ctxQ.close();
 }
 
 // Ayar yoksa Türkçe uyarı

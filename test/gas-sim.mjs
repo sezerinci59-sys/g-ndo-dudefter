@@ -63,6 +63,7 @@ export function createGas() {
     moveTo(folder) { folder.files.push(this); return this; }
     setName(n) { this.name = n; return this; }
     getParents() { return iter(this.parents || []); }
+    getBlob() { const b = this.bytes || []; const m = this.mime; return { getBytes: () => b, getContentType: () => m }; }
   }
   class FakeFolder {
     constructor(name) { Object.assign(this, { id: nextId('d'), name, files: [], folders: [] }); }
@@ -72,7 +73,7 @@ export function createGas() {
     getFoldersByName(n) { return iter(this.folders.filter((f) => f.name === n)); }
     getFiles() { return iter(this.files.slice()); }
     createFolder(n) { const f = new FakeFolder(n); f.parents = [this]; this.folders.push(f); folders.set(f.id, f); return f; }
-    createFile(blob) { const f = new FakeFile(blob.name, blob.bytes.length, blob.mime); f.parents = [this]; this.files.push(f); files.set(f.id, f); return f; }
+    createFile(blob) { const f = new FakeFile(blob.name, blob.bytes.length, blob.mime); f.bytes = blob.bytes; f.parents = [this]; this.files.push(f); files.set(f.id, f); return f; }
   }
   const folders = new Map(), files = new Map(), spreadsheets = new Map();
   for (const id of ['1N93nP0SZE1Epzsmss7lhTc27rwNQiHPY', '1PnWIRJRoiC4DauFzMnSJqoCX0hXDUWZ9', '1atlqBgNzuRbUCiomprLghf27MluqsM-2']) {
@@ -89,6 +90,7 @@ export function createGas() {
     Utilities: {
       getUuid: () => 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, () => Math.floor(Math.random() * 16).toString(16)),
       base64Decode: (b) => [...Buffer.from(b, 'base64')],
+      base64Encode: (bytes) => Buffer.from(bytes).toString('base64'),
       newBlob: (bytes, mime, name) => ({ bytes, mime, name }),
       formatDate: (d, tz, fmt) => {
         const p = Object.fromEntries(new Intl.DateTimeFormat('en-GB', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d).map((x) => [x.type, x.value]));

@@ -1360,7 +1360,7 @@ $('copyYesterday').addEventListener('click', async () => {
 
 // ---------- Kaydırarak gün değiştirme ----------
 const swipe = { x: 0, y: 0, on: false, cancel: false, mode: '', lx: 0, lt: 0, vx: 0, dx: 0, cards: [] };
-const swipeCards = () => [...document.querySelectorAll('main .card')];
+const swipeCards = () => [...document.querySelectorAll('main .card')].filter((c) => !c.hidden);
 const rubber = (dx) => { const a = Math.abs(dx), m = a <= 80 ? a : 80 + (a - 80) * 0.5; return dx < 0 ? -m : m; };
 let outAnims = [];
 // Kaydırma çıkış animasyonu, yeni günün giriş animasyonu başlayınca (aynı karede) bırakılır: arada eski içerik görünmez.
@@ -1758,6 +1758,7 @@ function logSummary(p) {
   if (p.note !== undefined) x.push('not');
   if (p.teams) x.push('ekip:' + p.teams.length + ' / kişi:' + p.teams.reduce((n, t) => n + (t.members || []).length, 0));
   if (p.metaKey) x.push(p.metaKey);
+  if (p.action === 'answerQuestion' || p.action === 'questionPhoto') x.push(p.id || p.fileId || '');
   if (p.name) x.push(p.name);
   if (p.action === 'renamePhoto') x.push(p.selected ? 'seç (s_ ekle)' : 'seçimi kaldır (s_ çıkar)');
   return x.join(' ');
@@ -1962,6 +1963,7 @@ async function sync(manual = false) {
       }
       if (q.type === 'renamePhoto') { if (await syncRename(q)) sentAny = true; refreshBanner(); continue; }
       if (q.type === 'saveMeta') { if (await syncMeta1(q)) sentAny = true; refreshBanner(); continue; }
+      if (q.type === 'answerQ') { if (await syncAnswer(q)) sentAny = true; refreshBanner(); continue; }
       if (q.type === 'deletePhoto') {
         // Drive'dan silme kaldırıldı (silme elle yapılır): eski kuyruk öğesi atılır.
         await dbDel('queue', q.id);
@@ -2011,7 +2013,7 @@ async function sync(manual = false) {
 let syncTimer;
 function scheduleSync(ms = 1500) { clearTimeout(syncTimer); syncTimer = setTimeout(() => sync(), ms); }
 $('syncNow').addEventListener('click', () => sync(true));
-window.addEventListener('online', () => { sync(); pullDay(true); pullRoster().then(pullMeta); maybeWeather(); });
+window.addEventListener('online', () => { sync(); pullDay(true); pullRoster().then(pullMeta); maybeWeather(); pullQuestions(); });
 setInterval(() => { if (document.visibilityState === 'visible') sync(); }, 60000);
 
 // ---------- Sunucudan çekme (Drive > telefon) ----------
@@ -2332,7 +2334,7 @@ async function liveTick() {
   liveBusy = true; lastLiveAt = Date.now();
   try {
     const site = state.site, date = state.date, o = otherSite();
-    await Promise.all([fetchDay(site, date, true), o ? fetchDay(o, date, true) : null, pullRoster().then(pullMeta)]);
+    await Promise.all([fetchDay(site, date, true), o ? fetchDay(o, date, true) : null, pullRoster().then(pullMeta), pullQuestions()]);
   } catch { /* sonraki turda */ } finally { liveBusy = false; }
 }
 function liveSoon() { if (Date.now() - lastLiveAt > 3000) setTimeout(liveTick, 0); }
@@ -2438,6 +2440,149 @@ $('prevDay').addEventListener('click', () => stepDay(-1));
 $('nextDay').addEventListener('click', () => stepDay(1));
 $('dateInput').addEventListener('change', (e) => setDate(e.target.value));
 
+// ---------- 4.0: Sorular (Claude sorar, buradan cevaplanır) ----------
+// Sorular Drive'daki "SORULAR" sekmesinden gelir. Cevap önce telefona yazılır, internet gelince gönderilir.
+const Q_KEY = 'sd_sorular', QA_KEY = 'sd_soru_cevap';
+const qPhotos = new Map(); // fileId -> dataURL (oturum boyunca)
+const qDraft = new Map();  // soru id -> seçilen seçenek / yazılan metin
+let qBusy = false, qUnknown = false;
+const readQ = () => { const o = ls.get(Q_KEY, null); return o && Array.isArray(o.items) ? o.items : []; };
+const readQA = () => { const o = ls.get(QA_KEY, {}); return o && typeof o === 'object' && !Array.isArray(o) ? o : {}; };
+function setQA(id, v) { const o = readQA(); if (v) o[id] = v; else delete o[id]; ls.set(QA_KEY, o); }
+async function pullQuestions() {
+  if (qBusy || !canPull() || qUnknown) return;
+  qBusy = true;
+  try {
+    const d = await post({ action: 'getQuestions' });
+    const items = Array.isArray(d && d.questions) ? d.questions : [];
+    ls.set(Q_KEY, { items, at: Date.now() });
+    // Sunucuda cevabı görünen (ya da işlenen) sorunun yerel kaydı temizlenir
+    const qa = readQA(); let ch = false;
+    for (const q of items) {
+      const l = qa[q.id];
+      if (l && l.sent && (q.status !== 'Açık' || (q.answeredAt || 0) >= l.at)) { delete qa[q.id]; ch = true; }
+    }
+    for (const id of Object.keys(qa)) if (qa[id].sent && !items.some((q) => q.id === id)) { delete qa[id]; ch = true; }
+    if (ch) ls.set(QA_KEY, qa);
+    renderQuestions();
+  } catch (err) { if (isUnknownAction(err)) { qUnknown = true; } }
+  finally { qBusy = false; }
+}
+function qSiteLabel(s) { return s || ''; }
+function renderQuestions() {
+  const card = $('qCard'), list = $('qList'); if (!card || !list) return;
+  if (document.activeElement && list.contains(document.activeElement) && document.activeElement.tagName === 'TEXTAREA') return; // yazarken bozma
+  const items = readQ(), qa = readQA();
+  const open = items.filter((q) => q.status !== 'İşlendi');
+  const done = items.filter((q) => q.status === 'İşlendi').slice(-3).reverse();
+  const waiting = open.filter((q) => q.status === 'Açık' && !qa[q.id]).length;
+  $('qBadge').textContent = waiting ? String(waiting) : '';
+  card.hidden = !open.length && !done.length;
+  list.textContent = '';
+  for (const q of open) list.appendChild(qItem(q, qa[q.id]));
+  if (done.length) {
+    const h = el('p', { className: 'hint', style: 'margin:12px 0 0' }, 'Son işlenenler');
+    list.appendChild(h);
+    for (const q of done) list.appendChild(qItem(q, null, true));
+  }
+}
+function qItem(q, local, isDone = false) {
+  const box = el('div', { className: 'qitem' + (isDone ? ' done' : '') });
+  box.dataset.qid = q.id;
+  box.appendChild(el('div', { className: 'qmeta' }, [q.date, qSiteLabel(q.site)].filter(Boolean).join(' · ')));
+  if (q.photoId) {
+    const src = qPhotos.get(q.photoId);
+    if (src) { const im = el('img', { className: 'qthumb', alt: 'Soru fotoğrafı' }); im.src = src; im.dataset.qzoom = q.photoId; box.appendChild(im); }
+    else if (!isDone) box.appendChild(el('button', { type: 'button', className: 'btn ghost block', style: 'margin:0 0 8px' }, '📷 Fotoğrafı göster')).dataset.qphoto = q.photoId;
+  }
+  box.appendChild(el('div', { className: 'qtext' }, q.text));
+  const ans = local ? local.answer : q.answer;
+  if (isDone) {
+    if (q.answer) box.appendChild(el('div', { className: 'qans' }, 'Cevap: ', el('b', {}, q.answer)));
+    if (q.result) box.appendChild(el('div', { className: 'qres' }, '✔ ' + q.result));
+    return box;
+  }
+  const answered = !!ans && (local || q.status === 'Cevaplandı');
+  if (answered && !qDraft.has(q.id + '|edit')) {
+    box.classList.add('answered');
+    box.appendChild(el('div', { className: 'qans' }, 'Cevabın: ', el('b', {}, ans)));
+    box.appendChild(el('div', { className: 'qres' }, local && !local.sent ? '⏳ Gönderilmeyi bekliyor' : '✔ Gönderildi — 16:00\'da işlenecek'));
+    const r = el('div', { className: 'qrow' }); const b = el('button', { type: 'button', className: 'btn ghost' }, 'Cevabı değiştir'); b.dataset.qedit = q.id; r.appendChild(b); box.appendChild(r);
+    return box;
+  }
+  const draft = qDraft.get(q.id) || {};
+  if (q.options && q.options.length) {
+    const ow = el('div', { className: 'qopts' });
+    for (const o of q.options) { const b = el('button', { type: 'button', className: 'btn' + (draft.opt === o ? ' on' : '') }, o); b.dataset.qopt = o; ow.appendChild(b); }
+    box.appendChild(ow);
+  }
+  const ta = el('textarea', { rows: 2, placeholder: q.options && q.options.length ? 'Başka bir cevap (isteğe bağlı)' : 'Cevabını yaz' });
+  ta.value = draft.text || ''; ta.dataset.qtext = q.id; box.appendChild(ta);
+  const r = el('div', { className: 'qrow' }); const send = el('button', { type: 'button', className: 'btn' }, 'Gönder'); send.dataset.qsend = q.id; r.appendChild(send); box.appendChild(r);
+  return box;
+}
+async function answerQ(id) {
+  const d = qDraft.get(id) || {};
+  const answer = String(d.text || '').trim() || String(d.opt || '').trim();
+  if (!answer) return toast('Önce bir seçenek seç ya da cevap yaz.');
+  const at = Date.now();
+  setQA(id, { answer, at, sent: false });
+  qDraft.delete(id); qDraft.delete(id + '|edit');
+  await dbPut('queue', { id: 'answer|' + id, type: 'answerQ', qid: id, answer, at });
+  renderQuestions(); refreshBanner(); scheduleSync(300);
+  toast('Cevap kaydedildi.');
+}
+async function syncAnswer(q) {
+  let r;
+  try { r = await post({ action: 'answerQuestion', id: q.qid, answer: q.answer, answeredAt: q.at }); }
+  catch (err) {
+    if (!err.server) throw err;
+    if (isUnknownAction(err)) { needUpdate = true; return false; } // Apps Script eski: sırada kalır
+    await dbDel('queue', q.id); setQA(q.qid, null); renderQuestions(); toast('Cevap gönderilemedi: ' + err.message); return false;
+  }
+  const cur = await dbGet('queue', q.id);
+  if (cur && cur.at === q.at) await dbDel('queue', q.id);
+  const l = readQA()[q.qid];
+  if (l && l.at === q.at) setQA(q.qid, r && r.applied === false && !r.missing ? null : { ...l, sent: true });
+  if (r && r.question) {
+    const items = readQ(); const i = items.findIndex((x) => x.id === r.question.id);
+    if (i >= 0) { items[i] = r.question; ls.set(Q_KEY, { items, at: Date.now() }); }
+  }
+  renderQuestions();
+  return true;
+}
+async function showQPhoto(fileId, btn) {
+  if (!canPull()) return toast('Fotoğraf için internet gerekir.');
+  if (btn) { btn.disabled = true; btn.textContent = 'Yükleniyor…'; }
+  try {
+    const r = await post({ action: 'questionPhoto', fileId });
+    qPhotos.set(fileId, `data:${r.mime || 'image/jpeg'};base64,${r.base64}`);
+    renderQuestions();
+  } catch (err) {
+    if (btn) { btn.disabled = false; btn.textContent = '📷 Fotoğrafı göster'; }
+    toast(isUnknownAction(err) ? "Bunun için Apps Script'i güncelleyin." : 'Fotoğraf açılamadı: ' + (err && err.message));
+  }
+}
+$('qList').addEventListener('click', (e) => {
+  const t = e.target.closest('button,img'); if (!t) return;
+  const box = t.closest('.qitem'); const id = box && box.dataset.qid;
+  if (t.dataset.qphoto) return showQPhoto(t.dataset.qphoto, t);
+  if (t.dataset.qzoom) { $('qPhotoImg').src = qPhotos.get(t.dataset.qzoom) || ''; $('qPhotoOv').hidden = false; return; }
+  if (!id) return;
+  if (t.dataset.qopt != null) {
+    const d = qDraft.get(id) || {}; d.opt = d.opt === t.dataset.qopt ? '' : t.dataset.qopt; qDraft.set(id, d);
+    box.querySelectorAll('[data-qopt]').forEach((b) => b.classList.toggle('on', b.dataset.qopt === d.opt));
+    return;
+  }
+  if (t.dataset.qsend) { try { document.activeElement && document.activeElement.blur(); } catch { /* yoksay */ } return answerQ(id); }
+  if (t.dataset.qedit) { qDraft.set(id + '|edit', true); const l = readQA()[id]; const q = readQ().find((x) => x.id === id); qDraft.set(id, { text: (l && l.answer) || (q && q.answer) || '' }); renderQuestions(); }
+});
+$('qList').addEventListener('input', (e) => {
+  const ta = e.target.closest('[data-qtext]'); if (!ta) return;
+  const d = qDraft.get(ta.dataset.qtext) || {}; d.text = ta.value; qDraft.set(ta.dataset.qtext, d);
+});
+$('qPhotoOv').addEventListener('click', () => { $('qPhotoOv').hidden = true; $('qPhotoImg').src = ''; });
+
 // ---------- Başlangıç ----------
 async function init() {
   try { navigator.storage?.persist?.(); } catch { /* yoksay */ }
@@ -2468,7 +2613,9 @@ async function init() {
   else $('picker').hidden = false;
   const found = await detectSite();
   if (found && found !== state.site) { await selectSite(found); toast(`Konuma göre ${SITES[found]} açıldı.`); }
+  renderQuestions();
   sync();
+  pullQuestions();
   scheduleLive();
 }
 init();

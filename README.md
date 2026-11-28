@@ -76,6 +76,19 @@ Web uygulaması adresi değişmez, kurulumu (`kurulum`) tekrar yapmanız gerekme
 - Yeni **AYARLAR** sekmesi: şantiyede gizlenen ekipler, sigorta çıkışı bilgileri ve şantiye konumları (iki telefon ortak kullanır).
 - **NOTLAR** sekmesindeki "Güncellenme" artık tarih-saat değeridir; iki telefonda aynı güne not yazılırsa en son yazılan kalır.
 
+## Sorular (4.0)
+
+Claude (her gün 16:00'daki otomatik görev) irsaliye ve günlük raporla ilgili emin olmadığı şeyleri **Puantaj - Gündoğdu** e-tablosundaki **SORULAR** sekmesine yazar. Uygulamada en üstte **Sorular** kartı çıkar:
+
+- Kırmızı rozet cevap bekleyen soru sayısıdır.
+- **📷 Fotoğrafı göster** ile sorunun fotoğrafı açılır, dokununca büyür.
+- Seçeneğe dokun ya da cevabı yaz, **Gönder**. İnternet yoksa telefonda bekler, sonra gider.
+- Claude bir sonraki çalışmada cevabı işler; soru "Son işlenenler"e geçer ve ne yapıldığı yazar.
+
+SORULAR sütunları: ID | Tarih | Şantiye | Soru | Fotoğraf ID | Seçenekler (" | " ile) | Cevap | Cevaplanma | Durum (Açık / Cevaplandı / İşlendi) | Sonuç. Satırları elle silmeyin.
+
+Bu özellik için Apps Script güncellenmelidir (yukarıdaki "Apps Script'i güncelleme" adımları).
+
 ## Bilinmesi gerekenler
 
 - Gizli anahtarı kimseyle paylaşmayın. Sızarsa Apps Script'te `anahtariYenile` fonksiyonunu çalıştırıp uygulamada yenisini girin.

@@ -99,6 +99,9 @@ function handle_(req) {
     case 'saveRoster2': return saveRoster2_(req);
     case 'getMeta': return getMeta_(req);
     case 'saveMeta': return saveMeta_(req);
+    case 'getQuestions': return getQuestions_(req);
+    case 'answerQuestion': return answerQuestion_(req);
+    case 'questionPhoto': return questionPhoto_(req);
     default: return { ok: false, error: 'unknown action: ' + req.action };
   }
 }
@@ -674,22 +677,26 @@ function renamePhoto_(req) {
   if (!id) return { ok: false, error: 'fileId boş.' };
   var file;
   try { file = DriveApp.getFileById(id); } catch (e) { return { ok: false, error: 'Dosya bulunamadı.' }; }
-  var allowed = {};
-  Object.keys(SITES).forEach(function (s) { allowed[SITES[s].photoFolderId] = true; });
-  var inside = false;
-  var p1 = file.getParents();
-  while (p1.hasNext() && !inside) {
-    var dateFolder = p1.next();
-    if (allowed[dateFolder.getId()]) { inside = true; break; }
-    var p2 = dateFolder.getParents();
-    while (p2.hasNext()) { if (allowed[p2.next().getId()]) { inside = true; break; } }
-  }
-  if (!inside) return { ok: false, error: 'Dosya şantiye fotoğraf klasörlerinde değil, adı değiştirilmedi.' };
+  if (!inSiteFolders_(file)) return { ok: false, error: 'Dosya şantiye fotoğraf klasörlerinde değil, adı değiştirilmedi.' };
   var cur = file.getName();
   var base = cur.replace(/^(s_)+/, '');
   var name = (req.selected === true || req.selected === 'true' ? 's_' : '') + base;
   if (name !== cur) file.setName(name);
   return { ok: true, v: API_VERSION, name: name };
+}
+
+// Dosya bir şantiye fotoğraf klasöründe (ya da onun gün klasöründe) mi?
+function inSiteFolders_(file) {
+  var allowed = {};
+  Object.keys(SITES).forEach(function (s) { allowed[SITES[s].photoFolderId] = true; });
+  var p1 = file.getParents();
+  while (p1.hasNext()) {
+    var dateFolder = p1.next();
+    if (allowed[dateFolder.getId()]) return true;
+    var p2 = dateFolder.getParents();
+    while (p2.hasNext()) { if (allowed[p2.next().getId()]) return true; }
+  }
+  return false;
 }
 
 function saveIrsaliye_(folder, dt, bytes, uid, sel) {
@@ -707,4 +714,98 @@ function saveIrsaliye_(folder, dt, bytes, uid, sel) {
   var file = folder.createFile(Utilities.newBlob(bytes, 'image/jpeg', name));
   if (uid) file.setDescription('sd:' + uid);
   return { ok: true, v: API_VERSION, fileId: file.getId(), name: name };
+}
+
+// ---------------------------------------------------------------- Sorular (4.0)
+// SORULAR (Puantaj - Gündoğdu): Claude soruları buraya yazar, uygulama gösterir ve cevabı yazar.
+// A ID | B Tarih | C Şantiye | D Soru | E Fotoğraf ID | F Seçenekler (" | " ile) | G Cevap | H Cevaplanma (ms) | I Durum | J Sonuç
+// Durum: "Açık" (cevap bekliyor) -> "Cevaplandı" (uygulamadan) -> "İşlendi" (Claude işledi). Satırlar silinmez.
+
+var QUESTIONS_SHEET = 'SORULAR';
+var Q_COLS = 10;
+var Q_HEADER = ['ID', 'Tarih', 'Şantiye', 'Soru', 'Fotoğraf ID', 'Seçenekler', 'Cevap', 'Cevaplanma', 'Durum', 'Sonuç'];
+
+function getQuestionsSheet_(ss, create) {
+  var sh = ss.getSheetByName(QUESTIONS_SHEET);
+  if (sh || !create) return sh;
+  sh = ss.insertSheet(QUESTIONS_SHEET);
+  sh.getRange(1, 1, 1, Q_COLS).setValues([Q_HEADER]).setFontWeight('bold').setBackground('#e5e7eb');
+  sh.setFrozenRows(1);
+  sh.setColumnWidth(4, 420);
+  sh.setColumnWidth(7, 260);
+  return sh;
+}
+
+function qStatus_(v) {
+  var t = lc_(String(v == null ? '' : v).trim());
+  if (t.indexOf('işlen') === 0 || t.indexOf('islen') === 0) return 'İşlendi';
+  if (t.indexOf('cevap') === 0) return 'Cevaplandı';
+  return 'Açık';
+}
+
+function readQuestions_(sh) {
+  var out = [];
+  if (!sh || sh.getLastRow() < 2) return out;
+  var rows = sh.getRange(2, 1, sh.getLastRow() - 1, Q_COLS).getValues();
+  rows.forEach(function (x, i) {
+    var id = String(x[0]).trim(), text = String(x[3]).trim();
+    if (!id || !text) return;
+    var d = x[1];
+    var date = (d && typeof d.getTime === 'function') ? Utilities.formatDate(d, 'Europe/Istanbul', 'dd.MM.yyyy') : String(d || '').trim();
+    out.push({
+      id: id, date: date, site: String(x[2]).trim(), text: text, photoId: String(x[4]).trim(),
+      options: String(x[5] || '').split('|').map(function (o) { return o.trim(); }).filter(function (o) { return o; }),
+      answer: String(x[6] == null ? '' : x[6]), answeredAt: Number(x[7]) || 0,
+      status: qStatus_(x[8]), result: String(x[9] == null ? '' : x[9]), row: i + 2
+    });
+  });
+  return out;
+}
+
+function qOut_(q) {
+  return { id: q.id, date: q.date, site: q.site, text: q.text, photoId: q.photoId, options: q.options,
+    answer: q.answer, answeredAt: q.answeredAt, status: q.status, result: q.result };
+}
+
+// Açık ve cevaplanmış (henüz işlenmemiş) sorular + son 10 işlenen (geçmiş için).
+function getQuestions_(req) {
+  var all = readQuestions_(getQuestionsSheet_(getSpreadsheet_(ROSTER_SITE), false));
+  var open = all.filter(function (q) { return q.status !== 'İşlendi'; });
+  var done = all.filter(function (q) { return q.status === 'İşlendi'; }).slice(-10);
+  return { ok: true, v: API_VERSION, questions: open.concat(done).map(qOut_) };
+}
+
+// Cevap: son yazan kazanır (Cevaplanma zamanına göre). İşlenmiş soru değiştirilmez.
+function answerQuestion_(req) {
+  var id = String(req.id || '').trim();
+  if (!id) throw new Error('Soru numarası boş.');
+  var answer = String(req.answer == null ? '' : req.answer).trim();
+  if (!answer) throw new Error('Cevap boş.');
+  if (answer.length > 2000) throw new Error('Cevap çok uzun.');
+  var at = Number(req.answeredAt) || new Date().getTime();
+  var ss = getSpreadsheet_(ROSTER_SITE);
+  return withLock_(function () {
+    var sh = getQuestionsSheet_(ss, false);
+    var q = readQuestions_(sh).filter(function (x) { return x.id === id; })[0];
+    if (!q) return { ok: true, v: API_VERSION, applied: false, missing: true };
+    if (q.status === 'İşlendi' || q.answeredAt > at) return { ok: true, v: API_VERSION, applied: false, question: qOut_(q) };
+    sh.getRange(q.row, 7, 1, 3).setValues([[answer, at, 'Cevaplandı']]);
+    sh.getRange(q.row, 8).setNumberFormat('0');
+    SpreadsheetApp.flush();
+    q.answer = answer; q.answeredAt = at; q.status = 'Cevaplandı';
+    return { ok: true, v: API_VERSION, applied: true, question: qOut_(q) };
+  });
+}
+
+// Sorunun fotoğrafı (yalnız şantiye fotoğraf klasörlerindeki dosyalar).
+function questionPhoto_(req) {
+  var id = String(req.fileId || '');
+  if (!id) return { ok: false, error: 'fileId boş.' };
+  var file;
+  try { file = DriveApp.getFileById(id); } catch (e) { return { ok: false, error: 'Fotoğraf bulunamadı.' }; }
+  if (!inSiteFolders_(file)) return { ok: false, error: 'Fotoğraf şantiye klasörlerinde değil.' };
+  var blob = file.getBlob();
+  var bytes = blob.getBytes();
+  if (bytes.length > 8 * 1024 * 1024) return { ok: false, error: 'Fotoğraf çok büyük.' };
+  return { ok: true, v: API_VERSION, name: file.getName(), mime: blob.getContentType() || 'image/jpeg', base64: Utilities.base64Encode(bytes) };
 }

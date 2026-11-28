@@ -53,6 +53,12 @@
   </div>
   </div>
 
+  <section class="card qcard" id="qCard" hidden>
+    <h2>Sorular <span id="qBadge" class="qbadge"></span></h2>
+    <p class="hint">Claude'un sorduğu sorular. Cevabını gönder, bir sonraki çalışmada (16:00) işlenir.</p>
+    <div id="qList"></div>
+  </section>
+
   <section class="card">
     <div class="card-head">
       <h2>Puantaj — <span id="puanSite"></span></h2>
@@ -169,6 +175,8 @@
     </div>
   </div>
 </div>
+
+<div id="qPhotoOv" class="qphoto-ov" hidden><img id="qPhotoImg" alt="Soru fotoğrafı"><button type="button" id="qPhotoClose" class="xclose" aria-label="Kapat">✕</button></div>
 
 <div id="toast" class="toast" role="status" hidden></div>
 <script type="module" src="app.js"></script>

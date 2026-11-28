@@ -201,6 +201,39 @@ check(k1.name === 'İrsaliye_18.11.2026_1.jpg', 'başka şantiyede numara 1den b
   check(rn.name === 's_İrsaliye_18.11.2026_5.jpg', 'irsaliye seçilince s_ eklenir');
 }
 
+// ---------------------------------------------------------------- 4.0: Sorular
+{
+  let q = call({ action: 'getQuestions' });
+  check(q.ok && Array.isArray(q.questions) && q.questions.length === 0, 'getQuestions: SORULAR sekmesi yokken boş liste');
+  const up = call({ action: 'uploadPhoto', site: 'koseilyas', date: D, name: 'İrsaliye_soru.jpg', base64: jpg });
+  // Claude'un yazdığı satırlar (Sheets bağlayıcısıyla)
+  const ss = ssOf('gundogdu');
+  const sh = ss.insertSheet('SORULAR');
+  const rows = [
+    ['ID', 'Tarih', 'Şantiye', 'Soru', 'Fotoğraf ID', 'Seçenekler', 'Cevap', 'Cevaplanma', 'Durum', 'Sonuç'],
+    ['Q1', '28.11.2026', 'Köseilyas', 'Tarih 09.11 mi?', up.fileId, 'Evet | Hayır, 08.11', '', '', 'Açık', ''],
+    ['Q2', '28.11.2026', 'Gündoğdu', 'Firma hangisi?', '', '', '', '', 'Açık', ''],
+    ['Q3', '27.11.2026', 'Gündoğdu', 'Eski soru', '', '', 'tamam', 1, 'İşlendi', 'Deftere yazıldı'],
+  ];
+  rows.forEach((r, i) => r.forEach((v, j) => sh.set(i + 1, j + 1, v)));
+  q = call({ action: 'getQuestions' });
+  check(q.questions.length === 3 && q.questions[0].id === 'Q1' && q.questions[0].options.length === 2 && q.questions[0].options[1] === 'Hayır, 08.11', 'getQuestions: açık + işlenen sorular, seçenekler ayrıldı');
+  check(q.questions[2].status === 'İşlendi' && q.questions[2].result === 'Deftere yazıldı', 'işlenen soru sonucu ile gelir');
+  let a = call({ action: 'answerQuestion', id: 'Q1', answer: 'Evet', answeredAt: 1000 });
+  check(a.ok && a.applied && sh.get(2, 7) === 'Evet' && sh.get(2, 8) === 1000 && sh.get(2, 9) === 'Cevaplandı', 'answerQuestion: cevap, zaman ve durum yazıldı');
+  a = call({ action: 'answerQuestion', id: 'Q1', answer: 'Eski cevap', answeredAt: 500 });
+  check(a.ok && !a.applied && sh.get(2, 7) === 'Evet', 'daha eski cevap yenisini ezmez');
+  a = call({ action: 'answerQuestion', id: 'Q3', answer: 'değiştir', answeredAt: 9999 });
+  check(a.ok && !a.applied && sh.get(4, 7) === 'tamam', 'işlenmiş soru değiştirilmez');
+  a = call({ action: 'answerQuestion', id: 'YOK', answer: 'x', answeredAt: 1 });
+  check(a.ok && a.missing, 'olmayan soru: missing');
+  check(call({ action: 'answerQuestion', id: 'Q2', answer: '   ' }).ok === false, 'boş cevap reddedilir');
+  const ph = call({ action: 'questionPhoto', fileId: up.fileId });
+  check(ph.ok && ph.base64 === jpg && ph.mime === 'image/jpeg', 'questionPhoto: fotoğraf base64 döner');
+  const outside2 = folders.get('1N93nP0SZE1Epzsmss7lhTc27rwNQiHPY').createFile({ name: 'gizli.jpg', bytes: [1, 2], mime: 'image/jpeg' });
+  check(call({ action: 'questionPhoto', fileId: outside2.getId() }).ok === false, 'questionPhoto: klasör dışı dosya verilmez');
+}
+
 check(lock().held === 0, 'tüm kilitler bırakıldı');
 
 console.log(failed ? `\n${failed} kontrol başarısız` : '\nApps Script testleri geçti');
